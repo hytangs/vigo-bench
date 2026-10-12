@@ -1,0 +1,17 @@
+{
+  "name": "vigo-coordinate-bench",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bench": "node scripts/benchmark-study.mjs",
+    "dashboard": "node scripts/benchmark-dashboard.mjs",
+    "setup:expanded-engines": "node scripts/setup-expanded-engines.mjs",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs && python3 -m unittest discover -s test -p 'test_*.py'"
+  },
+  "dependencies": {
+    "leaflet": "1.9.4"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

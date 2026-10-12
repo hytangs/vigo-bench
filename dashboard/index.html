@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>VIGO Bench</title>
+  <link rel="stylesheet" href="/vendor/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/vendor/leaflet.js" defer></script>
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to benchmark</a>
+  <header class="app-header">
+    <a class="wordmark" href="/" aria-label="VIGO Bench home">VIGO<span> / Bench</span></a><nav class="workspace-nav"><a href="#route-workspace">Explore ODs</a><a href="#engines-title">Performance</a></nav>
+    <div class="header-actions"><span id="connection" class="connection">Connecting</span><div class="run-tools"><button id="refresh" class="tool-icon" aria-label="Refresh" title="Refresh">↻</button><button id="open-run" class="tool-icon" aria-label="Run benchmark" title="Run benchmark">▶</button><button id="stop-run" class="tool-icon" aria-label="Stop run" title="Stop run" disabled>■</button></div><button id="open-launch" class="primary">New benchmark</button></div>
+  </header>
+  <main id="main">
+    <section class="hero">
+      <div><p class="eyebrow">VIGO Bench</p><h1>Benchmarks</h1></div>
+      <div class="run-picker"><label for="benchmark-select">Benchmark</label><select id="benchmark-select"><option value="">Loading…</option></select><label for="run-select">Results</label><select id="run-select"><option value="">Latest per engine</option></select><p id="run-meta" class="muted"></p><select id="city-select" aria-label="City" hidden><option value="">All cities</option></select></div>
+    </section>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <section id="active-panel" class="active-panel" aria-label="Running benchmark" hidden>
+      <div><h2 id="active-title">Benchmark running</h2><p id="active-detail"></p></div>
+      <div class="active-actions"><button id="view-active" class="quiet">View run</button></div>
+      <details class="logs"><summary>Live log</summary><pre id="live-log" tabindex="0">Waiting for output…</pre></details>
+    </section>
+    <div id="empty" class="empty" hidden><h2>Create your first benchmark</h2><p>Choose a city, OD count, and the types of journeys to compare.</p><button id="empty-launch" class="primary">New benchmark</button></div>
+    <div id="workspace" hidden>
+      <section class="overview" aria-label="Run overview">
+        <div class="overview-title"><h2 id="run-title">Benchmark</h2><p id="controls-summary" class="muted"></p><div id="run-types" class="run-types" aria-label="Benchmark types in this workload"></div></div>
+        <div class="stat"><span id="ready-count">—</span><span class="stat-label"><i class="dot ready"></i>Ready</span></div>
+        <div class="stat"><span id="blocked-count">—</span><span class="stat-label"><i class="dot blocked"></i>Blocked</span></div>
+        <div class="stat"><span id="error-count">—</span><span class="stat-label"><i class="dot error"></i>Query errors</span></div>
+        <div class="stat"><span id="unsubmitted-count">—</span><span class="stat-label"><i class="dot unsubmitted"></i>Unsubmitted</span></div>
+      </section>
+      <section id="route-workspace" class="route-workspace" aria-label="OD explorer">
+        <aside class="od-sidebar">
+          <div class="od-sidebar-heading"><h2>Explore ODs</h2><span id="od-count" class="badge">—</span></div>
+          <label class="sr-only" for="od-search">Find any OD</label><input id="od-search" type="search" placeholder="Find any OD…" autocomplete="off">
+          <label class="sr-only" for="od-type-select">OD population</label><select id="od-type-select"><option value="all">All populations</option><option value="random">Random streets</option><option value="near_stop">Near stops</option><option value="station_pivot">Long offsets</option></select>
+          <div id="od-list" class="od-list" aria-label="Benchmark ODs"></div>
+          <div class="od-pagination"><button id="od-page-back" class="quiet" aria-label="Previous OD page">←</button><span id="od-page-label"></span><button id="od-page-next" class="quiet" aria-label="Next OD page">→</button></div>
+        </aside>
+        <div class="route-stage">
+          <div class="route-heading"><div><p class="eyebrow">Selected journey</p><h2 id="od-title">Choose an OD</h2><p id="od-coordinates" class="muted"></p></div><div class="map-fit-controls"><button id="od-previous" class="quiet" aria-label="Previous OD">← Previous</button><button id="od-next" class="quiet" aria-label="Next OD">Next →</button></div></div>
+          <section class="map-section" aria-labelledby="map-title">
+            <div class="map-heading"><h3 id="map-title">Routes</h3><div class="map-fit-controls"><label class="sr-only" for="map-view">Routes to display</label><select id="map-view"><option value="single">This OD · one engine</option><option value="od-all">This OD · all engines</option><option value="all-single">All ODs · one engine</option><option value="all-all">All ODs · all engines</option></select><button id="map-fit-route" class="quiet" disabled>Fit route</button><button id="map-fit" class="quiet">All ODs</button></div></div>
+            <div id="benchmark-map" class="benchmark-map" aria-label="Interactive street map of benchmark origins, destinations, and selected route"></div>
+            <div class="map-query-controls"><span id="map-selection" class="muted">Choose an OD.</span><label class="sr-only" for="map-engine">Map engine</label><select id="map-engine" disabled><option value="">Choose an engine</option></select><button id="map-inspect" class="quiet" disabled>Route details ↗</button></div>
+            <p id="map-route-note" class="route-note" role="status"></p><div id="map-legend" class="engine-legend"></div><details class="map-evidence"><summary>Route details</summary><p id="map-status" class="muted"></p><p id="map-detail" class="muted"></p></details>
+          </section>
+          <div class="od-comparison-heading"><h3>Engine comparison</h3><span id="od-comparison-note" class="muted"></span></div>
+          <div id="od-engine-cards" class="od-engine-cards" aria-label="Engine results for selected OD"></div>
+          <div class="comparison-action"><p id="od-missing-note" class="muted"></p><button id="compare-all-engines" class="quiet">Run selected engines</button></div>
+        </div>
+      </section>
+      <section id="journey-accuracy" class="comparison" aria-labelledby="accuracy-title" hidden>
+        <div class="section-heading"><h2 id="accuracy-title">Journey duration agreement</h2></div>
+        <p id="accuracy-note" class="context-note"></p>
+        <div class="table-wrap"><table class="engine-table"><thead><tr><th>Engine / route source</th><th>Paired / requested n</th><th>Pearson r</th><th>Median absolute gap · min</th><th>Signed median gap · min</th><th>Timing matched / resident n</th></tr></thead><tbody id="accuracy-rows"></tbody></table></div>
+      </section>
+      <section class="comparison" aria-labelledby="engines-title">
+        <div class="section-heading"><div><h2 id="engines-title">Performance</h2></div><label class="inline-control">Timing layer<select id="comparison-metric"><option value="endToEnd">Full query · E2E</option><option value="adapterDeclared">Adapter declared</option><option value="adapterOverhead">Outside adapter</option><option value="engineQuery">Engine reported</option></select></label></div>
+        <p id="comparison-note" class="context-note">Full query includes request encoding, transport, adapter work, and response decoding. Historical runs may not record this boundary.</p>
+        <div class="comparison-toolbar"><label>Compare<select id="comparison-population"><option value="common">Shared routed ODs</option><option value="all">All responses</option></select></label><label>Type<select id="comparison-type"><option value="all">All types</option><option value="random">Random streets</option><option value="near_stop">Near stops</option><option value="station_pivot">Long offsets</option></select></label></div><div id="engine-chart" class="engine-chart" aria-live="polite"></div><div id="chart-legend" class="engine-legend"></div><div class="table-wrap"><table class="engine-table"><caption class="sr-only">Engine timing and outcomes. Select an engine to inspect its observations.</caption><thead><tr><th scope="col">Engine / setup</th><th scope="col">p50 <small>ms</small></th><th scope="col">p95 <small>ms</small></th><th scope="col">p99 <small>ms</small></th><th scope="col">Ready</th><th scope="col" title="Native no-itinerary or policy-rejected candidate">Blocked</th><th scope="col">Query errors</th><th scope="col">Unsubmitted</th><th scope="col">Build <small>s</small></th><th scope="col">Peak RSS <small>MiB</small></th><th scope="col">Storage <small>MiB</small></th></tr></thead><tbody id="engine-rows"></tbody></table></div>
+        <p id="engine-note" class="context-note"></p>
+      </section>
+      <section id="explorer" class="explorer" aria-labelledby="explorer-title">
+        <div class="section-heading"><div><h2 id="explorer-title">Queries</h2></div><span id="sample-count" class="badge">No lane selected</span></div>
+        <div id="lane-message" class="notice" role="status" hidden></div>
+        <div id="lane-content" hidden>
+          <div class="filter-bar">
+            <label>Timing<select id="metric-filter"><option value="endToEndMs">Full query · E2E</option><option value="queryMs">Adapter declared</option><option value="adapterOverheadMs">Outside adapter</option><option value="requestEncodeMs">Request encoding</option><option value="responseDecodeMs">Response decoding</option><option value="engineQueryMs">Engine reported</option></select></label>
+            <label>Outcome<select id="outcome-filter"><option value="valid">Ready + no itinerary</option><option value="ready">Ready</option><option value="blocked">No itinerary</option><option value="error">Query errors</option><option value="all">All observed</option></select></label>
+            <label>Request scope<select id="scope-filter"><option value="all">All requests</option><option value="processFirst">First process request</option><option value="subsequentDistinct">Subsequent distinct ODs</option><option value="first">First request per OD</option><option value="repeated">Repeated ODs</option></select></label>
+            <label>OD type<select id="od-filter"><option value="all">All OD types</option></select></label>
+            <label>Plot<select id="chart-filter"><option value="ecdf">Cumulative distribution</option><option value="sequence">Request sequence</option></select></label>
+          </div>
+
+          <div class="timing-stats"><div><span id="latency-p50">—</span><label>p50 · ms</label></div><div><span id="latency-p95">—</span><label>p95 · ms</label></div><div><span id="latency-p99">—</span><label>p99 · ms</label></div><div><span id="latency-mean">—</span><label>Mean · ms</label></div><div class="timing-explanation"><p id="metric-note"></p><span id="timing-count" class="muted"></span></div></div>
+          <div class="chart-toolbar"><label><input type="checkbox" id="log-scale" checked> Log timing axis</label><button id="download-chart" class="text-button">Export chart SVG</button></div>
+          <div id="chart" class="chart" aria-live="polite"></div>
+          <div class="lane-meta"><div><h3>First request & steady state</h3><div id="startup-stats"></div><details><summary>Process & full lane costs</summary><div id="process-stats"></div><p id="process-boundary"></p></details></div><div><h3>Measurement boundary</h3><p id="boundary-text"></p><details><summary>Setup, controls & limitations</summary><div id="lane-details"></div></details></div></div>
+          <div class="query-header"><h3>Observations</h3><label class="query-search"><span class="sr-only">Find observation or OD ID</span><input id="query-search" type="search" placeholder="Find observation or OD ID" autocomplete="off"></label><button id="download" class="quiet">Export filtered CSV</button></div>
+          <div class="table-wrap"><table class="query-table"><caption class="sr-only">Filtered observations. Open a query to inspect its full response.</caption><thead><tr><th scope="col">Observation</th><th scope="col">OD type</th><th scope="col">Outcome</th><th scope="col">Repeat</th><th scope="col">Full query <small>ms</small></th><th scope="col">Adapter <small>ms</small></th><th scope="col">Outside adapter <small>ms</small></th></tr></thead><tbody id="query-rows"></tbody></table></div>
+          <div class="pagination"><span id="page-label" class="muted"></span><button id="previous-page" class="quiet"> Previous</button><button id="next-page" class="quiet">Next</button></div>
+        </div>
+      </section>
+      <details class="provenance"><summary>Run evidence & controls</summary><pre id="run-evidence" tabindex="0"></pre><ul id="run-warnings"></ul></details>
+    </div>
+  </main>
+  <footer><span id="updated-at"></span></footer>
+  <dialog id="launch-dialog" aria-labelledby="launch-title">
+    <form id="launch-form">
+      <div class="dialog-heading"><div><h2 id="launch-title">New benchmark</h2></div><button type="button" class="icon-button" data-close="launch-dialog" aria-label="Close benchmark configuration">×</button></div>
+      <p class="context-note">One set of ODs. Run it as often as you need, with any engines.</p><label>Benchmark name · optional<input id="launch-name" maxlength="100" placeholder="e.g. Anchorage morning commute"></label>
+      <fieldset><legend>Benchmark size</legend>
+        <div class="form-grid"><label>OD pairs per engine<input id="launch-size" type="number" min="1" step="1" value="2000" required></label></div>
+        <div class="size-presets"><button type="button" class="quiet" data-size="30">30</button><button type="button" class="quiet" data-size="300">300</button><button type="button" class="quiet" data-size="3000">3,000</button></div>
+      </fieldset>
+      <fieldset class="benchmark-types"><legend>Benchmark types</legend>
+        <p class="context-note">Choose one or combine types. Counts add up to the benchmark size.</p>
+        <div class="type-choices">
+          <div class="type-choice"><label class="type-toggle"><input id="type-random" type="checkbox" checked><strong>Random street pairs</strong></label><p>Endpoints sampled from OSM streets.</p><label>Random street pairs<input id="launch-random-count" type="number" min="0" step="1" value="1000" required></label></div>
+          <div class="type-choice"><label class="type-toggle"><input id="type-near-stop" type="checkbox"><strong>Near-stop pairs</strong></label><p>Endpoints close to transit stops.</p><label>Near-stop pairs<input id="launch-near-stop-count" type="number" min="0" step="1" value="0" required></label></div>
+          <div class="type-choice"><label class="type-toggle"><input id="type-station-pivot" type="checkbox" checked><strong>Long-offset pairs</strong></label><p>Endpoints farther from transit stops.</p><label>Long-offset pairs<input id="launch-station-pivot-count" type="number" min="0" step="1" value="1000" required></label></div>
+        </div>
+        <p id="launch-types-summary" class="context-note" aria-live="polite"></p>
+      </fieldset>
+      <div class="form-grid"><label>City<select id="launch-city" name="city" required></select></label><button id="open-city" type="button" class="quiet">Add city</button></div>
+      <details><summary>Departure & routing limits</summary><div class="form-grid"><label>Service date · blank selects from feed<input id="launch-date" name="serviceDate" type="date"></label><label>Departure time<input id="launch-time" name="time" type="time" required></label><label>Maximum walk · km<input id="launch-walk" name="maxWalkKm" type="number" min="0.01" max="100" step="0.01" required></label><label>Maximum transfers<input id="launch-transfers" name="maxTransfers" type="number" min="0" max="31" step="1" required></label><label>Search horizon · minutes<input id="launch-horizon" name="horizonMinutes" type="number" min="1" max="2880" step="1" required></label></div></details><div id="launch-engines" hidden></div>
+      <details><summary>Stop-offset distances</summary><fieldset><legend>Distance from each stop anchor</legend><div class="form-grid"><label>Near-stop minimum · m<input id="launch-near-stop-min-m" type="number" min="0" step="1" value="0" required></label><label>Near-stop maximum · m<input id="launch-near-stop-max-m" type="number" min="0" step="1" value="400" required></label><label>Long-offset minimum · m<input id="launch-station-pivot-min-m" type="number" min="0" step="1" value="800" required></label><label>Long-offset maximum · m<input id="launch-station-pivot-max-m" type="number" min="0" step="1" value="1200" required></label></div></fieldset></details>
+      <div id="launch-reuse-note" class="notice" hidden></div>
+      <div id="launch-input-note" class="notice" hidden></div><div id="launch-error" class="notice error-notice" role="alert" hidden></div>
+      <div class="dialog-footer"><span id="launch-scope" class="muted"></span><button id="launch-submit" type="submit" class="primary">Create benchmark</button></div>
+    </form>
+  </dialog>
+  <dialog id="run-dialog" aria-labelledby="run-dialog-title"><form id="run-form"><div class="dialog-heading"><h2 id="run-dialog-title">Run benchmark</h2><button type="button" class="icon-button" data-close="run-dialog" aria-label="Close engine selection">×</button></div><p id="run-scope" class="context-note"></p><fieldset><legend>Engines</legend><div class="engine-select-actions"><button type="button" id="run-select-all" class="text-button">All</button><button type="button" id="run-select-none" class="text-button">None</button></div><div id="run-engines" class="engine-choices"></div></fieldset><div id="run-error" class="notice error-notice" hidden></div><div class="dialog-footer"><span class="muted">Earlier runs stay in Results.</span><button id="run-submit" type="submit" class="primary">Run</button></div></form></dialog>
+  <dialog id="city-dialog" aria-labelledby="city-title"><form id="city-form"><div class="dialog-heading"><h2 id="city-title">Add city</h2><button type="button" class="icon-button" data-close="city-dialog" aria-label="Close add city">×</button></div><label>City name<input id="city-name" required maxlength="100" placeholder="e.g. Chicago"></label><label class="city-drop">OSM map + GTFS feeds<input id="city-files" type="file" multiple accept=".pbf,.zip" required><span class="muted">One .pbf street map and one or more .zip transit feeds.</span></label><p id="city-progress" class="context-note" role="status"></p><div id="city-error" class="notice error-notice" hidden></div><div class="dialog-footer"><button id="city-submit" type="submit" class="primary">Add city</button></div></form></dialog>
+  <dialog id="query-dialog" aria-labelledby="query-title"><div class="dialog-heading"><div><h2 id="query-title">Observation</h2></div><button class="icon-button" data-close="query-dialog" aria-label="Close query details">×</button></div><div id="query-detail" aria-live="polite"></div></dialog>
+</body>
+</html>

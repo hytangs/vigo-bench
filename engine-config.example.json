@@ -1,0 +1,8 @@
+{
+  "engines": {
+    "custom-engine": {
+      "command": ["python3", "adapters/custom-engine.py"],
+      "loads": ["osm", "gtfs"]
+    }
+  }
+}

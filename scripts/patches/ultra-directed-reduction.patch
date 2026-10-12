@@ -1,0 +1,87 @@
+--- a/DataStructures/Intermediate/Data.h
++++ b/DataStructures/Intermediate/Data.h
+@@ -329,48 +329,49 @@
+     inline size_t contractDegreeTwoVertices() noexcept {
+         std::cout << "Reducing multi edges." << std::endl;
+         transferGraph.reduceMultiEdgesBy(TravelTime);
+-        std::cout << "Contracting vertices with degree less than three." << std::endl;
++        std::cout << "Contracting vertices with at most two directed neighbors." << std::endl;
+         std::vector<bool> deleteVertex(transferGraph.numVertices(), false);
+         std::vector<Vertex> vertices;
+         for (const Vertex vertex : transferGraph.vertices()) {
+-            if (isStop(vertex)) continue;
+-            if (transferGraph.outDegree(vertex) > 2) continue;
+-            vertices.emplace_back(vertex);
+-        }
++            if (!isStop(vertex) && transferGraph.neighbors(vertex).size() <= 2) vertices.emplace_back(vertex);
++        }
++        struct Shortcut { Vertex from; Vertex to; int travelTime; };
+         size_t deletionCount = 0;
+         for (size_t i = 0; i < vertices.size(); i++) {
+             const Vertex vertex = vertices[i];
+-            if (isStop(vertex)) continue;
+-            if (transferGraph.outDegree(vertex) == 0) {
+-                deleteVertex[vertex] = true;
+-                deletionCount++;
+-            } else if (transferGraph.outDegree(vertex) == 1) {
+-                const Vertex n = transferGraph.get(ToVertex, transferGraph.edgesFrom(vertex)[0]);
+-                transferGraph.isolateVertex(vertex);
+-                if (transferGraph.outDegree(n) <= 2) vertices.emplace_back(n);
+-                deleteVertex[vertex] = true;
+-                deletionCount++;
+-            } else if (transferGraph.outDegree(vertex) == 2) {
+-                const Edge a = transferGraph.edgesFrom(vertex)[0];
+-                const Edge b = transferGraph.edgesFrom(vertex)[1];
+-                const Vertex from = transferGraph.get(ToVertex, a);
+-                const Vertex to = transferGraph.get(ToVertex, b);
+-                if (transferGraph.hasEdge(from, to)) {
+-                    const Edge c = transferGraph.findEdge(from, to);
+-                    const Edge d = transferGraph.findEdge(to, from);
+-                    const double travelTime = std::min(transferGraph.get(TravelTime, c), transferGraph.get(TravelTime, a) + transferGraph.get(TravelTime, b));
+-                    transferGraph.set(TravelTime, c, travelTime);
+-                    transferGraph.set(TravelTime, d, travelTime);
++            if (isStop(vertex) || deleteVertex[vertex]) continue;
++            const std::set<Vertex> neighbors = transferGraph.neighbors(vertex);
++            if (neighbors.size() > 2 || neighbors.count(vertex)) continue;
++            std::vector<Shortcut> shortcuts;
++            bool overflow = false;
++            // Eliminate only existing incoming-outgoing paths. Never infer a reverse arc.
++            // Snapshot costs before addEdge can relocate the underlying edge records.
++            for (const Vertex from : neighbors) {
++                for (const Vertex to : neighbors) {
++                    if (from == to) continue;
++                    const Edge incoming = transferGraph.findEdge(from, vertex);
++                    const Edge outgoing = transferGraph.findEdge(vertex, to);
++                    if (!transferGraph.isEdge(incoming) || !transferGraph.isEdge(outgoing)) continue;
++                    const long long travelTime = static_cast<long long>(transferGraph.get(TravelTime, incoming))
++                                               + transferGraph.get(TravelTime, outgoing);
++                    if (travelTime > std::numeric_limits<int>::max()) { overflow = true; continue; }
++                    shortcuts.push_back({from, to, static_cast<int>(travelTime)});
++                }
++            }
++            if (overflow) continue;
++            for (const Shortcut& shortcut : shortcuts) {
++                const Edge existing = transferGraph.findEdge(shortcut.from, shortcut.to);
++                if (transferGraph.isEdge(existing)) {
++                    transferGraph.set(TravelTime, existing, std::min(transferGraph.get(TravelTime, existing), shortcut.travelTime));
+                 } else {
+-                    const double travelTime = transferGraph.get(TravelTime, a) + transferGraph.get(TravelTime, b);
+-                    transferGraph.addEdge(from, to).set(TravelTime, travelTime);
+-                    transferGraph.addEdge(to, from).set(TravelTime, travelTime);
+-                }
+-                transferGraph.isolateVertex(vertex);
+-                if (transferGraph.outDegree(from) <= 2) vertices.emplace_back(from);
+-                if (transferGraph.outDegree(to) <= 2) vertices.emplace_back(to);
+-                deleteVertex[vertex] = true;
+-                deletionCount++;
++                    transferGraph.addEdge(shortcut.from, shortcut.to).set(TravelTime, shortcut.travelTime);
++                }
++            }
++            transferGraph.isolateVertex(vertex);
++            deleteVertex[vertex] = true;
++            deletionCount++;
++            for (const Vertex neighbor : neighbors) {
++                if (!isStop(neighbor) && !deleteVertex[neighbor]) vertices.emplace_back(neighbor);
+             }
+         }
+         transferGraph.deleteVertices(deleteVertex, true);
