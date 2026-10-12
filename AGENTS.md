@@ -12,5 +12,6 @@ Keep successful itineraries, no-itinerary outcomes, setup failures, query errors
 and unsubmitted requests distinct. Report timing at its actual measurement
 boundary. Synthetic tests are not evidence of city performance or correctness.
 
-Run `npm ci --ignore-scripts` and `npm test` for source changes. Preserve existing
+Install Python dependencies from `requirements.txt`, then run
+`npm ci --ignore-scripts` and `npm test` for source changes. Preserve existing
 uncommitted work and never overwrite frozen evidence to make checks pass.

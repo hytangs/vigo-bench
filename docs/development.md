@@ -152,7 +152,8 @@ or serialization selectively without retaining and documenting that boundary.
 Update [timing contracts](../scripts/benchmark-contracts.mjs) for built-in
 adapter changes, and preserve provenance when a runtime patch affects results.
 
-Run the repository's existing tests from its root:
+Install `requirements.txt` in an activated Python virtual environment, then run
+the repository's existing tests from its root:
 
 ```bash
 npm test

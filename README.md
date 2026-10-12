@@ -29,7 +29,10 @@ Start with a result, inspect the journey behind it, then follow its evidence.
 From this repository:
 
 ```bash
-npm install
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+npm ci --ignore-scripts
 npm run dashboard
 ```
 
