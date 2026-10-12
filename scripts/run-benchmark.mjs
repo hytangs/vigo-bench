@@ -655,10 +655,10 @@ function measuredInvocation(command, measureRss = true) {
   return { command: timePath, args: [process.platform === 'darwin' ? '-l' : '-v', ...command] }
 }
 
-function parseMaxRss(stderr) {
+export function parseMaxRss(stderr) {
   const mac = stderr.match(/maximum resident set size:\s*([\d,]+)/iu)
   if (mac) return Number(mac[1].replaceAll(',', ''))
-  const macTrailing = stderr.match(/([\d,]+)\s+maximum resident set size/iu)
+  const macTrailing = stderr.match(/([\d,]+)[ \t]+maximum resident set size/iu)
   if (macTrailing) return Number(macTrailing[1].replaceAll(',', ''))
   const linux = stderr.match(/maximum resident set size \(kbytes\):\s*([\d,]+)/iu)
   if (linux) return Number(linux[1].replaceAll(',', '')) * 1024
