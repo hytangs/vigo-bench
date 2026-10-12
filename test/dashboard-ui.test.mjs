@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { distribution, filterObservations, formatNumber, splitPopulation, filterOdRequests } from '../dashboard/app.js'
+import { renderSensitivityRows, distribution, filterObservations, formatNumber, splitPopulation, filterOdRequests } from '../dashboard/app.js'
 
 test('benchmark size presets and custom sizes preserve the exact requested total', () => {
   for (const size of [1, 2, 10, 30, 300, 2000, 3000, 10001]) {
@@ -49,3 +49,14 @@ test('OD search includes no-itinerary, failed and unsubmitted requests independe
   assert.deepEqual(filterOdRequests(rows,'SECOND'),[rows[1]])
   assert.deepEqual(filterOdRequests(rows,'','random'),[rows[0]])
 })
+
+test('live sensitivity table shows excluded successes and never times coordinate mismatches', () => {
+  const rows = [{id:'a',odType:'random',engines:{A:{status:'ready',endToEndMs:10},B:{status:'ready',endToEndMs:20}}},
+    {id:'b',odType:'random',engines:{A:{status:'ready',endToEndMs:100},B:{status:'blocked',endToEndMs:1,outcomeReason:'native_candidate_rejected'}}},
+    {id:'c',odType:'near_stop',engines:{A:{status:'mismatch',endToEndMs:999}}}];
+  const html=renderSensitivityRows(rows,['A','B'],'random');
+  assert.match(html, /<td>A<\/td><td>2 \/ 2<\/td><td>2<\/td><td>0<\/td><td>1<\/td><td>10<\/td><td>10<\/td><td>1<\/td>/);
+  assert.match(html, /<td>B<\/td><td>1 \/ 2<\/td><td>2<\/td><td>1<\/td>/);
+  assert.doesNotMatch(renderSensitivityRows(rows,['A','B']), /999/);
+  assert.match(renderSensitivityRows(rows,['<unsafe>']), /&lt;unsafe&gt;/);
+});

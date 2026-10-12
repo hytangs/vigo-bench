@@ -9,7 +9,7 @@ engine alive and answers the runner's one-request-per-line protocol.
 
 from __future__ import annotations
 
-from adapter_runtime import agency_timezone, gtfs_rows, ResidentHttpClient
+from adapter_runtime import candidate_limit, agency_timezone, gtfs_rows, ResidentHttpClient
 
 HTTP = ResidentHttpClient()
 
@@ -401,7 +401,7 @@ def motis_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
         "maxDirectTime": "0",
         "maxTravelTime": str(comparison()["horizonMinutes"]),
         "maxTransfers": str(comparison()["maxTransfers"]),
-        "numItineraries": "1",
+        "numItineraries": str(candidate_limit(CONTEXT)),
         "searchWindow": "0",
         # A fixed depart-at benchmark includes initial waiting. An empty
         # timetable window with numItineraries=1 is still a profile query.
@@ -418,7 +418,7 @@ def motis_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
     if any(not isinstance(candidate, dict) for candidate in candidates):
         raise RuntimeError("MOTIS response contains an invalid itinerary")
     diagnostics = {"algorithm": "MOTIS native point query", "walkingNetwork": "osm",
-                   "timetableView": False, "nativeCandidateCount": len(candidates),
+                   "timetableView": False, "requestedCandidateLimit": candidate_limit(CONTEXT), "nativeCandidateCount": len(candidates),
                    "selectionScope": "earliest arrival among returned candidates passing adapter checks; global optimality unproven"}
     if not candidates:
         return {"id": request["id"], "status": "blocked", "queryMs": elapsed, "detail": "MOTIS returned no itinerary.",
@@ -462,7 +462,7 @@ def otp_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
         destination: {{ location: {{ coordinate: {{ latitude: {float(destination[1])}, longitude: {float(destination[0])} }} }} }}
         dateTime: {{ earliestDeparture: "{departure}" }}
         searchWindow: "PT0S"
-        first: 1
+        first: {candidate_limit(CONTEXT)}
         modes: {{ direct: [WALK], transitOnly: true, transit: {{ access: [WALK], egress: [WALK], transfer: [WALK] }} }}
         preferences: {{ street: {{ walk: {{ speed: {comparison()["walkSpeedKph"] / 3.6}, reluctance: 1, boardCost: 0, safetyFactor: 0 }} }}, transit: {{ board: {{ slack: "PT0S", waitReluctance: 1 }}, alight: {{ slack: "PT0S" }}, transfer: {{ slack: "PT0S", cost: 0, maximumTransfers: {comparison()["maxTransfers"]} }} }} }}
       ) {{ edges {{ node {{ duration start end numberOfTransfers walkTime walkDistance waitingTime legs {{ mode distance duration start {{ scheduledTime }} end {{ scheduledTime }} from {{ name lat lon stop {{ gtfsId }} }} to {{ name lat lon stop {{ gtfsId }} }} trip {{ gtfsId }} route {{ gtfsId shortName }} legGeometry {{ points length }} interlineWithPreviousLeg }} }} }} }}
@@ -480,20 +480,49 @@ def otp_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
     if not isinstance(edges, list) or any(not isinstance(edge, dict) or not isinstance(edge.get("node"), dict) for edge in edges):
         raise RuntimeError("OTP response omitted valid planConnection edges")
     native_candidates = [edge["node"] for edge in edges]
-    # LIST_ALL preserves fixed-departure results but also bypasses OTP's
-    # presentation-level transitOnly filter. Select the requested mode from
-    # all native candidates; do not let a faster walk hide a returned bus.
-    candidates = [candidate for candidate in native_candidates if any(leg.get('mode') != 'WALK' for leg in candidate.get('legs', []))]
-    if not candidates:
-        return {"id": request["id"], "status": "blocked", "queryMs": elapsed, "detail": "OTP returned no transit itinerary among its native candidates.", "plan": {"status": "blocked", "diagnostics": {"algorithm": "OTP GraphQL planConnection", "walkingNetwork": "osm", "nativeWalkOnlyCandidates": len(native_candidates)}}}
-    itinerary = min(candidates, key=lambda value: str(value.get("end", "")))
-    duration = (dt.datetime.fromisoformat(itinerary['end'].replace('Z', '+00:00')) - dt.datetime.fromisoformat(departure)).total_seconds() / 60
-    if duration > comparison()['horizonMinutes']:
-        return {"id": request["id"], "status": "blocked", "queryMs": elapsed,
-                "detail": "OTP returned a transit candidate beyond the requested horizon.", "rejectedItinerary": itinerary,
-                "plan": {"status": "blocked", "diagnostics": {"algorithm": "OTP GraphQL planConnection", "walkingNetwork": "osm",
-                    "outcomeReason": "native_candidate_rejected", "policyViolations": ['horizon_exceeded'], "unreachabilityProven": False}}}
-    return {"id": request["id"], "status": "ready", "queryMs": elapsed, "itinerary": itinerary, "plan": {"status": "ready", "durationMinutes": duration, "transfers": int(itinerary.get("numberOfTransfers", 0)), "diagnostics": {"algorithm": "OTP GraphQL planConnection", "walkingNetwork": "osm"}}}
+    evaluated = []
+    for index, itinerary in enumerate(native_candidates):
+        legs = itinerary.get('legs')
+        if not isinstance(legs, list) or not legs:
+            raise RuntimeError('OTP candidate omitted legs')
+        duration = (dt.datetime.fromisoformat(itinerary['end'].replace('Z', '+00:00')) - dt.datetime.fromisoformat(departure)).total_seconds() / 60
+        if not math.isfinite(duration) or duration < 0:
+            raise RuntimeError('OTP candidate has invalid arrival time')
+        rides = [i for i, leg in enumerate(legs) if leg.get('mode') not in (None, 'WALK')]
+        violations = []
+        if not rides:
+            violations.append('transit_required')
+        if int(itinerary.get('numberOfTransfers', 0)) > comparison()['maxTransfers']:
+            violations.append('transfer_cap_exceeded')
+        if duration > comparison()['horizonMinutes']:
+            violations.append('horizon_exceeded')
+        if rides:
+            for role, part in [('access', legs[:rides[0]]), ('egress', legs[rides[-1]+1:])]:
+                if any(leg.get('distance') is None for leg in part):
+                    violations.append(f'{role}_walk_distance_unreported')
+                elif sum(float(leg['distance']) for leg in part) > float(CONTEXT['maxWalkKm']) * 1000:
+                    violations.append(f'{role}_walk_budget_exceeded')
+        evaluated.append((duration, index, itinerary, violations))
+    evaluated.sort(key=lambda item: item[0])
+    passing = [item for item in evaluated if not item[3]]
+    diagnostics = {'algorithm': 'OTP GraphQL planConnection', 'walkingNetwork': 'osm',
+                   'requestedCandidateLimit': candidate_limit(CONTEXT), 'nativeCandidateCount': len(evaluated),
+                   'policyPassingCandidateCount': len(passing), 'unreachabilityProven': False,
+                   'nativeWalkOnlyCandidates': sum('transit_required' in item[3] for item in evaluated),
+                   'selectionScope': 'earliest arrival among returned candidates passing adapter checks; global optimality unproven',
+                   'nativeCandidateRejections': [{'nativeIndex': i, 'policyViolations': v} for _, i, _, v in evaluated if v]}
+    if not passing:
+        diagnostics['outcomeReason'] = 'native_candidate_rejected' if evaluated else 'native_no_itinerary'
+        return {'id': request['id'], 'status': 'blocked', 'queryMs': elapsed,
+                'detail': 'No returned OTP candidate passes the requested controls; no further native search was run.',
+                'rejectedItinerary': evaluated[0][2] if evaluated else None,
+                'rejectedItineraries': [item[2] for item in evaluated],
+                'plan': {'status': 'blocked', 'diagnostics': diagnostics}}
+    duration, index, itinerary, _ = passing[0]
+    diagnostics['selectedNativeIndex'] = index
+    return {'id': request['id'], 'status': 'ready', 'queryMs': elapsed, 'itinerary': itinerary,
+            'plan': {'status': 'ready', 'durationMinutes': duration,
+                     'transfers': int(itinerary.get('numberOfTransfers', 0)), 'diagnostics': diagnostics}}
 
 
 def native_stdout(callable_object):

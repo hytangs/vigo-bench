@@ -189,6 +189,45 @@ class AdapterOutcomeTests(unittest.TestCase):
         with patch.object(adapter, "http_json", return_value={"data": {"planConnection": {"edges": []}}}):
             self.assertEqual(adapter.otp_query(REQUEST, "http://unused")["status"], "blocked")
 
+    def test_candidate_limit_validation_and_native_parameters(self):
+        adapter = self.load('native-engine-adapter')
+        adapter.CONTEXT['comparison'] = {'maxTransfers': 3, 'horizonMinutes': 240, 'walkSpeedKph': 4.8, 'candidateLimit': 5}
+        with patch.object(adapter, 'http_json', return_value={'itineraries': []}) as http:
+            adapter.motis_query(REQUEST, 'http://unused')
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(http.call_args.args[0]).query)
+        self.assertEqual(params['numItineraries'], ['5'])
+        for invalid in [0, 21, True, 2.5, '5']:
+            adapter.CONTEXT['comparison']['candidateLimit'] = invalid
+            with self.assertRaises(ValueError):
+                adapter.motis_query(REQUEST, 'http://unused')
+
+    def test_otp_selects_later_compliant_candidate_and_retains_rejection(self):
+        adapter = self.load('native-engine-adapter')
+        adapter.CONTEXT['comparison'] = {'maxTransfers': 1, 'horizonMinutes': 240, 'walkSpeedKph': 4.8, 'candidateLimit': 5}
+        bad = {'end': '2025-06-29T08:05:00+00:00', 'numberOfTransfers': 2, 'legs': [{'mode': 'BUS'}]}
+        good = {'end': '2025-06-29T08:10:00+00:00', 'numberOfTransfers': 1, 'legs': [{'mode': 'BUS'}]}
+        with patch.object(adapter, 'local_departure', return_value='2025-06-29T08:00:00+00:00'), \
+             patch.object(adapter, 'http_json', return_value={'data': {'planConnection': {'edges': [{'node': bad}, {'node': good}]}}}) as http:
+            result = adapter.otp_query(REQUEST, 'http://unused')
+        self.assertEqual(result['status'], 'ready')
+        self.assertEqual(result['itinerary'], good)
+        self.assertIn('first: 5', http.call_args.kwargs['body']['query'])
+        diagnostics = result['plan']['diagnostics']
+        self.assertEqual(diagnostics['selectedNativeIndex'], 1)
+        self.assertEqual(diagnostics['nativeCandidateRejections'][0]['policyViolations'], ['transfer_cap_exceeded'])
+
+    def test_graphhopper_selects_compliant_alternative(self):
+        adapter = self.load('graphhopper-engine-adapter')
+        adapter.CONTEXT['comparison'] = {'candidateLimit': 5, 'maxTransfers': 1}
+        bad = {'time': 1000, 'legs': [{'type': 'walk', 'distance': 1}]}
+        good = {'time': 2000, 'legs': [{'type': 'pt', 'trip_id': 'fixture'}], 'transfers': 0}
+        row = self.graphhopper_query(adapter, [{'paths': [bad, good]}])[0]
+        self.assertEqual(row['status'], 'ready')
+        self.assertEqual(row['itinerary'], good)
+        self.assertEqual(row['plan']['diagnostics']['selectedNativeIndex'], 1)
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(adapter.route_url('http://unused', REQUEST)).query)
+        self.assertEqual(params['pt.limit_solutions'], ['5'])
+
     def test_valhalla_protocol_errors_differ_from_native_no_path(self):
         adapter = self.load("native-engine-adapter")
         actor = Mock()

@@ -36,6 +36,10 @@ npm ci --ignore-scripts
 npm run dashboard
 ```
 
+The live dashboard is included in this repository and runs locally; GitHub does
+not host it as a running service. It shows live preparation/query progress and
+supports starting, stopping and replaying runs.
+
 Open [127.0.0.1:4173](http://127.0.0.1:4173). Create a benchmark by choosing a
 city, OD count, and any mix of random street, near-stop, and long-offset pairs.
 Use **Add city** to upload one OSM PBF and one or more GTFS ZIPs. Inputs and
@@ -107,6 +111,17 @@ street legality or global optimality.
 [Read the evidence](docs/evidence.md) explains the directory layout, completion
 states, timing coverage and offline checks. Audit commands write derived
 files; use a separate analysis copy when working with frozen evidence.
+
+## Fairness sensitivity
+
+Use `candidateLimit` to investigate returned-candidate selection and the automatic
+`comparison.json` sensitivity section to compare common-success timing with
+coverage, all submissions, route complexity and output size. The dashboard’s
+**Coverage and subset sensitivity** table shows shared-ready and all-submitted
+timing beside coverage and recorded candidate rejections. Existing evidence
+can be analyzed read-only with `node scripts/report-sensitivity.mjs RUN NEW_OUTPUT.json`.
+See [candidate and subset sensitivity](docs/methodology.md#candidate-budget-and-paired-subset-sensitivity)
+for experiment controls, limitations and interpretation.
 
 ## Related projects and publication scope
 

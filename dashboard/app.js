@@ -113,7 +113,7 @@ function showCatalog() {
   if ((state.catalog.cities ?? []).some(city => city.slug === selectedCity)) $('launch-city').value = selectedCity;
   $('launch-engines').innerHTML = state.catalog.engines.map(engine => `<input type="checkbox" name="engines" value="${html(engine)}" checked>`).join('');
   const defaults = state.catalog.defaults ?? {};
-  for (const [id, key] of [['launch-time','time'],['launch-walk','maxWalkKm'],['launch-transfers','maxTransfers'],['launch-horizon','horizonMinutes']]) if (!$(id).value) $(id).value = defaults[key];
+  for (const [id, key] of [['launch-time','time'],['launch-walk','maxWalkKm'],['launch-transfers','maxTransfers'],['launch-horizon','horizonMinutes'],['launch-candidates','candidateLimit']]) if (!$(id).value) $(id).value = defaults[key];
   updateLaunchScope();
   renderActive();
 }
@@ -616,7 +616,7 @@ async function launch(event) {
   updateLaunchScope();
   setNotice('launch-error', '');
   try {
-    const payload = { city: $('launch-city').value, engines: [...document.querySelectorAll('#launch-engines input:checked')].map((input) => input.value), serviceDate: $('launch-date').value, time: $('launch-time').value, maxWalkKm: Number($('launch-walk').value), maxTransfers: Number($('launch-transfers').value), horizonMinutes: Number($('launch-horizon').value) };
+    const payload = { city: $('launch-city').value, engines: [...document.querySelectorAll('#launch-engines input:checked')].map((input) => input.value), serviceDate: $('launch-date').value, time: $('launch-time').value, maxWalkKm: Number($('launch-walk').value), maxTransfers: Number($('launch-transfers').value), horizonMinutes: Number($('launch-horizon').value), candidateLimit: Number($('launch-candidates').value) };
     Object.assign(payload, { randomCount: Number($('launch-random-count').value), nearStopCount: Number($('launch-near-stop-count').value), stationPivotCount: Number($('launch-station-pivot-count').value), nearStopMinMeters: Number($('launch-near-stop-min-m').value), nearStopMaxMeters: Number($('launch-near-stop-max-m').value), stationPivotMinMeters: Number($('launch-station-pivot-min-m').value), stationPivotMaxMeters: Number($('launch-station-pivot-max-m').value) });
     payload.name = $('launch-name').value;
     payload.reuseRun = state.reuseRun;
@@ -753,9 +753,23 @@ function boot() {
 
 if (typeof document !== 'undefined') boot();
 
+export function renderSensitivityRows(rows, engines, type = 'all') {
+  const eligible = rows.filter(row => type === 'all' || row.odType === type);
+  const common = engines.length >= 2 ? eligible.filter(row => engines.every(engine => row.engines[engine]?.status === 'ready')) : [];
+  const commonIds = new Set(common.map(row => row.id));
+  return engines.map(engine => {
+    const submitted = eligible.filter(row => row.engines[engine] && row.engines[engine].status !== 'mismatch');
+    const ready = submitted.filter(row => row.engines[engine].status === 'ready');
+    const rejected = submitted.filter(row => row.engines[engine].outcomeReason === 'native_candidate_rejected').length;
+    const median = selected => formatNumber(distribution(selected.map(row => row.engines[engine]?.endToEndMs)).p50Ms);
+    return `<tr><td>${html(engine)}</td><td>${ready.length} / ${eligible.length}</td><td>${submitted.length}</td><td>${rejected}</td><td>${common.length}</td><td>${median(common)}</td><td>${median(submitted)}</td><td>${ready.filter(row => !commonIds.has(row.id)).length}</td></tr>`;
+  }).join('') || '<tr><td colspan="8">Run engines to compare coverage and timing.</td></tr>';
+}
+
 function renderComparisonChart() {
   const metric = Object.entries(metrics).find(([, value]) => value.key === $('comparison-metric').value)?.[0] ?? 'endToEndMs';
   const engines = selectedLanes().map(lane => lane.engine);
+  $('sensitivity-rows').innerHTML = renderSensitivityRows(state.odRows, engines, $('comparison-type').value);
   renderEngineChart($('engine-chart'), $('chart-legend'), state.odRows, engines, { metric, population: $('comparison-population').value, type: $('comparison-type').value });
   setText('comparison-note', $('comparison-population').value === 'common'
     ? `${metrics[metric].note} Chart uses the same ODs routed by every engine. Table includes the full workload.`

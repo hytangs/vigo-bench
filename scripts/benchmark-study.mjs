@@ -9,7 +9,7 @@ import { writeJsonAtomic } from './benchmark-evidence.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 export const defaultStudy = () => ({ version: 1, engines: [...DEFAULT_ENGINES], seed: 20260816,
-  serviceDate: null, time: '08:00', maxWalkKm: 1.2, maxTransfers: 3, horizonMinutes: 240,
+  serviceDate: null, time: '08:00', maxWalkKm: 1.2, maxTransfers: 3, horizonMinutes: 240, candidateLimit: 1,
   population: { random: 1000, nearStop: 1000, stationPivot: 1000, nearStopMinMeters: 0, nearStopMaxMeters: 400, stationPivotMinMeters: 800, stationPivotMaxMeters: 1200 } })
 
 const populationFields = { random: 'random-count', nearStop: 'near-stop-count', stationPivot: 'station-pivot-count', nearStopMinMeters: 'near-stop-min-m', nearStopMaxMeters: 'near-stop-max-m', stationPivotMinMeters: 'station-pivot-min-m', stationPivotMaxMeters: 'station-pivot-max-m' }
@@ -32,7 +32,7 @@ export function validateStudy(value) {
   if (!Number.isSafeInteger(config.seed) || config.seed < 0) throw new Error('seed must be a nonnegative integer')
   if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.time)) throw new Error('time must be HH:MM')
   if (config.serviceDate !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(config.serviceDate) || !Number.isFinite(Date.parse(config.serviceDate)) || new Date(config.serviceDate).toISOString().slice(0,10) !== config.serviceDate)) throw new Error('serviceDate must be YYYY-MM-DD or null for feed inference')
-  for (const [key, min, max, integer] of [['maxWalkKm', .01, 100, false], ['maxTransfers', 0, 31, true], ['horizonMinutes', 1, 2880, true]]) {
+  for (const [key, min, max, integer] of [['candidateLimit', 1, 20, true], ['maxWalkKm', .01, 100, false], ['maxTransfers', 0, 31, true], ['horizonMinutes', 1, 2880, true]]) {
     if (typeof config[key] !== 'number' || !Number.isFinite(config[key]) || config[key] < min || config[key] > max || (integer && !Number.isInteger(config[key]))) throw new Error(`Invalid ${key}`)
   }
   for (const [key, value] of Object.entries(config.population)) if (typeof value !== 'number' || !Number.isFinite(value)) throw new Error(`Invalid population ${key}`)
@@ -43,7 +43,7 @@ const populationArgs = config => Object.entries(populationFields).flatMap(([key,
 export const studyIdentity = config => digest(Object.fromEntries(Object.entries(config).filter(([key]) => key !== 'engines')))
 export function studyArguments(config, { inputRoot, city, generate = false, reuse = null, output = null, check = false }) {
   const args = ['--input-root', inputRoot, '--cities', city, '--seed', String(config.seed), '--cache-mode', 'native', '--routing-preference', 'fastest', '--time', config.time,
-    '--max-walk', String(config.maxWalkKm), '--max-transfers', String(config.maxTransfers), '--horizon', String(config.horizonMinutes), '--engines', config.engines.join(',')]
+    '--candidate-limit', String(config.candidateLimit ?? 1), '--max-walk', String(config.maxWalkKm), '--max-transfers', String(config.maxTransfers), '--horizon', String(config.horizonMinutes), '--engines', config.engines.join(',')]
   if (config.serviceDate) args.push('--service-date', config.serviceDate)
   if (reuse) args.push('--reuse-run', reuse)
   else args.push(...populationArgs(config))

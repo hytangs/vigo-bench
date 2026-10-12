@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from adapter_runtime import agency_timezone, ResidentHttpClient
+from adapter_runtime import candidate_limit, agency_timezone, ResidentHttpClient
 
 HTTP = ResidentHttpClient()
 
@@ -235,7 +235,7 @@ def route_url(base_url: str, request: dict[str, Any]) -> str:
             ("pt.earliest_departure_time", departure_iso()),
             ("pt.profile", "false"),
             ("pt.walk_speed", str(walk_speed)),
-            ("pt.limit_solutions", "1"),
+            ("pt.limit_solutions", str(candidate_limit(CONTEXT))),
             ("pt.limit_trip_time", f"PT{CONTEXT.get('comparison', {}).get('horizonMinutes', 240)}M"),
             ("pt.limit_street_time", f"PT{max_walk_seconds}S"),
             ("points_encoded", "false"),
@@ -295,34 +295,44 @@ def query() -> None:
                     if server.process.poll() is not None:
                         break
                     continue
-                path = paths[0]
-                legs = path.get("legs") if isinstance(path.get("legs"), list) else []
-                transit_legs = sum(
-                    1
-                    for leg in legs
-                    if isinstance(leg, dict)
-                    and str(leg.get("type", "")).lower() not in {"walk", "foot"}
-                    and (leg.get("route_id") is not None or leg.get("trip_id") is not None)
-                )
-                duration_ms = path.get("time")
-                if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or not math.isfinite(duration_ms) or duration_ms < 0:
-                    raise RuntimeError("GraphHopper path omitted numeric time")
-                engine_ms = payload.get("info", {}).get("took") if isinstance(payload.get("info"), dict) else None
-                violations = []
-                if not legs:
-                    raise RuntimeError("GraphHopper path omitted legs")
-                if not transit_legs:
-                    violations.append("transit_required")
-                if path.get("transfers", max(0, transit_legs - 1)) > CONTEXT.get('comparison', {}).get('maxTransfers', 3):
-                    violations.append("transfer_cap_exceeded")
-                if duration_ms > CONTEXT.get('comparison', {}).get('horizonMinutes', 240) * 60000:
-                    violations.append("horizon_exceeded")
+                evaluated = []
+                for index, path in enumerate(paths):
+                    legs = path.get("legs") if isinstance(path.get("legs"), list) else []
+                    transit_legs = sum(
+                        1
+                        for leg in legs
+                        if isinstance(leg, dict)
+                        and str(leg.get("type", "")).lower() not in {"walk", "foot"}
+                        and (leg.get("route_id") is not None or leg.get("trip_id") is not None)
+                    )
+                    duration_ms = path.get("time")
+                    if isinstance(duration_ms, bool) or not isinstance(duration_ms, (int, float)) or not math.isfinite(duration_ms) or duration_ms < 0:
+                        raise RuntimeError("GraphHopper path omitted numeric time")
+                    violations = []
+                    if not legs:
+                        raise RuntimeError("GraphHopper path omitted legs")
+                    if not transit_legs:
+                        violations.append("transit_required")
+                    if path.get("transfers", max(0, transit_legs - 1)) > CONTEXT.get('comparison', {}).get('maxTransfers', 3):
+                        violations.append("transfer_cap_exceeded")
+                    if duration_ms > CONTEXT.get('comparison', {}).get('horizonMinutes', 240) * 60000:
+                        violations.append("horizon_exceeded")
+                    evaluated.append((duration_ms, index, path, transit_legs, violations))
+                evaluated.sort(key=lambda item: item[0])
+                passing = [item for item in evaluated if not item[4]]
+                duration_ms, selected_index, path, transit_legs, violations = (passing or evaluated)[0]
+                engine_ms = payload.get('info', {}).get('took') if isinstance(payload.get('info'), dict) else None
+                selection = {'requestedCandidateLimit': candidate_limit(CONTEXT), 'nativeCandidateCount': len(evaluated),
+                             'policyPassingCandidateCount': len(passing),
+                             'selectedNativeIndex': selected_index if passing else None,
+                             'selectionScope': 'shortest duration among returned candidates passing adapter checks; global optimality unproven',
+                             'nativeCandidateRejections': [{'nativeIndex': i, 'policyViolations': v} for _, i, _, _, v in evaluated if v]}
                 if violations:
                     emit({"id": request.get("id"), "status": "blocked", "queryMs": elapsed_ms,
                           "timing": {"engineQueryMs": engine_ms}, "rejectedItinerary": path,
-                          "detail": "GraphHopper native candidate violates requested controls; alternatives were not searched.",
+                          "detail": "Every returned GraphHopper candidate violates requested controls; no further native search was run.",
                           "plan": {"status": "blocked", "diagnostics": {"algorithm": "GraphHopper public transit", "walkingNetwork": "osm",
-                              "outcomeReason": "native_candidate_rejected", "policyViolations": violations, "unreachabilityProven": False}}})
+                              **selection, "outcomeReason": "native_candidate_rejected", "policyViolations": violations, "unreachabilityProven": False}}})
                     continue
                 emit(
                     {
@@ -338,7 +348,7 @@ def query() -> None:
                             "diagnostics": {
                                 "algorithm": "GraphHopper public transit",
                                 "walkingNetwork": "osm",
-                                "transitLegs": transit_legs,
+                                **selection, "transitLegs": transit_legs,
                                 "tripBasedPreprocessing": False,
                             },
                         },

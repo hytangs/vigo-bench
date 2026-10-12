@@ -113,3 +113,16 @@ test('new city files are token protected, local, and never overwrite existing in
     assert.equal((await(await fetch(`${base}/api/catalog`)).json()).benchmarks[0].label,'Morning')
   }finally{await new Promise(resolve=>app.server.close(resolve));fs.rmSync(root,{recursive:true,force:true})}
 })
+
+test('a shared dashboard name never merges different comparison controls', () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'vigo-budget-groups-'));
+  try {
+    const benchmark=createBenchmark(root,config);
+    saveRun(root,'run-a',{benchmarkId:benchmark.id,identity:'candidate-budget-1',engine:'VIGO'});
+    saveRun(root,'run-b',{benchmarkId:benchmark.id,identity:'candidate-budget-5',engine:'MOTIS'});
+    const groups=listBenchmarks(root);
+    assert.equal(groups.length,2);
+    assert(groups.every(group=>group.attempts.length===1));
+    assert(groups.every(group=>benchmarkResults(root,group.id).cities[0].engines.length===1));
+  } finally {fs.rmSync(root,{recursive:true,force:true})}
+});

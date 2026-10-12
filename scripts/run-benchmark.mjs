@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { comparisonObservation } from './benchmark-sensitivity.mjs'
 
 import fs from 'node:fs'
 import path from 'node:path'
@@ -776,6 +777,8 @@ function normalizeObservation(request, payload, wallMs) {
     itinerary: durationRejected ? null : payload?.itinerary ?? plan,
     ...(durationRejected ? { rejectedItinerary: payload?.itinerary ?? plan }
       : payload?.rejectedItinerary ? { rejectedItinerary: payload.rejectedItinerary } : {}),
+    ...(payload?.rejectedItineraries ? { rejectedItineraries: payload.rejectedItineraries } : {}),
+    candidateSelection: plan?.diagnostics ? Object.fromEntries(['requestedCandidateLimit', 'nativeCandidateCount', 'policyPassingCandidateCount', 'selectedNativeIndex', 'nativeCandidateRejections', 'selectionScope', 'unreachabilityProven', 'policyViolations'].filter(key => key in plan.diagnostics).map(key => [key, plan.diagnostics[key]])) : null,
     failure: plan?.diagnostics?.failureCode ?? payload?.failure ?? null,
     route: plan ? {
       travelMode: plan.travelMode ?? null,
@@ -1843,6 +1846,7 @@ function usage() {
     '  --count N               Optional total check; supplied CSV prefix length',
     '  --repeats N             Exactly 1: one full-itinerary query per OD',
     '  --cache-mode VALUE      native, enabled or disabled (default: reused value or native)',
+    '  --candidate-limit N     Returned-candidate sensitivity for MOTIS/OTP/GraphHopper (1–20; default 1)',
     '  --seed N                Sampling seed (default: reused value or 20260816)',
     '  --service-date DATE     Exact YYYY-MM-DD; otherwise reused or inferred from GTFS',
     '  --service-day VALUE     weekday, saturday, or sunday; otherwise reused or derived',
@@ -1922,7 +1926,9 @@ async function main() {
   const horizonMinutes = parsePositiveInteger(lastArgument(args, 'horizon', String(reusedControls.comparison?.horizonMinutes ?? 240)), 'horizon')
   const walkSpeedKph = 4.8
   if (maxTransfers > 31 || horizonMinutes > 2880) fail('max-transfers must be <=31 and horizon <=2880 minutes')
-  const comparison = { requireTransitRide: true, maxTransfers, horizonMinutes, walkSpeedKph, transferSlackSeconds: 0, output: 'itinerary', endpointAccess: 'OSM', departureWindowSeconds: 0 }
+  const candidateLimit = parsePositiveInteger(lastArgument(args, 'candidate-limit', String(reusedControls.comparison?.candidateLimit ?? 1)), 'candidate-limit')
+  if (candidateLimit > 20) fail('candidate-limit must be <=20')
+  const comparison = { requireTransitRide: true, maxTransfers, horizonMinutes, candidateLimit, walkSpeedKph, transferSlackSeconds: 0, output: 'itinerary', endpointAccess: 'OSM', departureWindowSeconds: 0 }
   const engineConfig = loadEngineConfig(args)
   const engineOrder = lastArgument(args, 'engine-order', 'seeded')
   if (!['seeded', 'listed'].includes(engineOrder)) fail('--engine-order must be seeded or listed')
@@ -2023,7 +2029,7 @@ async function main() {
   }
   updateManifest({})
   try {
-  const fairness = fairnessRecord(engines, cacheMode)
+  const fairness = fairnessRecord(engines, cacheMode, comparison)
   writeJsonAtomic(path.join(outputDirectory, 'fairness.json'), fairness)
   const provenance = await recordProvenance(BENCH_ROOT, outputDirectory, options, engines)
   updateManifest({ provenance, fairness: 'fairness.json', mode: args.has('generate-only') ? 'workload-only' : 'benchmark' })
@@ -2089,8 +2095,8 @@ async function main() {
       updateManifest({ phase: 'engine', currentEngine: engine })
       const result = await runEngine(context, engine, options)
       engineRows.push(result.row)
-      pairedLanes.push({ engine, complete: result.row.round?.complete === true && result.row.status === 'ready', counts: result.row.counts,
-        rows: new Map(result.observations.map(row => [row.id, { status: row.status, endToEndMs: row.endToEndMs }])) })
+      pairedLanes.push({ engine, complete: result.row.round?.complete === true && result.row.status === 'ready', counts: result.row.counts, requestedCount: context.requests.length, setupErrors: result.row.setupErrors,
+        rows: new Map(result.observations.map(row => [row.id, comparisonObservation(row)])) })
       detailFiles.push({ engine, file: path.relative(outputDirectory, path.join(result.row.workdir, 'queries.ndjson')) })
       updateManifest({ completedEngineCities: manifest.completedEngineCities + 1,
         errors: result.row.errors.length || result.row.blockedReason ? [...manifest.errors, { city: city.slug, engine, status: result.row.status, errors: result.row.errors, blockedReason: result.row.blockedReason }] : manifest.errors })

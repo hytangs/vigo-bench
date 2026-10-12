@@ -13,7 +13,7 @@ import { createBenchmark, listBenchmarks, getBenchmark, benchmarkResults, benchm
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url)
 const ROOT = path.resolve(path.dirname(SCRIPT_PATH), '..')
-const DEFAULTS = { randomCount: 1000, nearStopCount: 0, stationPivotCount: 1000, nearStopMinMeters: 0, nearStopMaxMeters: 400, stationPivotMinMeters: 800, stationPivotMaxMeters: 1200, serviceDate: '', time: '08:00', maxWalkKm: 1.2, maxTransfers: 3, horizonMinutes: 240 }
+const DEFAULTS = { randomCount: 1000, nearStopCount: 0, stationPivotCount: 1000, nearStopMinMeters: 0, nearStopMaxMeters: 400, stationPivotMinMeters: 800, stationPivotMaxMeters: 1200, serviceDate: '', time: '08:00', maxWalkKm: 1.2, maxTransfers: 3, horizonMinutes: 240, candidateLimit: 1 }
 
 export function validateLaunch(value, cities) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a run configuration')
@@ -29,7 +29,7 @@ export function validateLaunch(value, cities) {
   if (config.serviceDate && (!/^\d{4}-\d{2}-\d{2}$/.test(config.serviceDate) || !Number.isFinite(Date.parse(config.serviceDate))
     || new Date(config.serviceDate).toISOString().slice(0, 10) !== config.serviceDate)) throw new Error('Service date must be a valid YYYY-MM-DD date or blank for feed-based selection')
   if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(config.time)) throw new Error('Departure time must be HH:MM')
-  for (const [key, min, max, integer] of [['maxWalkKm', 0.01, 100, false], ['maxTransfers', 0, 31, true], ['horizonMinutes', 1, 2880, true]]) {
+  for (const [key, min, max, integer] of [['candidateLimit', 1, 20, true], ['maxWalkKm', 0.01, 100, false], ['maxTransfers', 0, 31, true], ['horizonMinutes', 1, 2880, true]]) {
     const number = config[key]
     if (typeof number !== 'number' || !Number.isFinite(number) || number < min || number > max || (integer && !Number.isInteger(number))) throw new Error(`Invalid ${key}`)
   }
@@ -37,7 +37,7 @@ export function validateLaunch(value, cities) {
     if (typeof config[key] !== 'number' || !Number.isFinite(config[key])) throw new Error(`Invalid ${key}`)
   }
   workloadConfig(parseArguments(['--random-count', String(config.randomCount), '--near-stop-count', String(config.nearStopCount), '--station-pivot-count', String(config.stationPivotCount), '--near-stop-min-m', String(config.nearStopMinMeters), '--near-stop-max-m', String(config.nearStopMaxMeters), '--station-pivot-min-m', String(config.stationPivotMinMeters), '--station-pivot-max-m', String(config.stationPivotMaxMeters)]))
-  return Object.fromEntries(['reuseRun', 'runKind', 'city', 'engines', 'serviceDate', 'time', 'maxWalkKm', 'maxTransfers', 'horizonMinutes', 'randomCount', 'nearStopCount', 'stationPivotCount', 'nearStopMinMeters', 'nearStopMaxMeters', 'stationPivotMinMeters', 'stationPivotMaxMeters'].map(key => [key, config[key]]))
+  return Object.fromEntries(['reuseRun', 'runKind', 'city', 'engines', 'serviceDate', 'time', 'maxWalkKm', 'maxTransfers', 'horizonMinutes', 'candidateLimit', 'randomCount', 'nearStopCount', 'stationPivotCount', 'nearStopMinMeters', 'nearStopMaxMeters', 'stationPivotMinMeters', 'stationPivotMaxMeters'].map(key => [key, config[key]]))
 }
 
 function tail(file, limit = 48 * 1024) {
@@ -151,7 +151,7 @@ export function createDashboard({ resultsRoot = path.join(ROOT, 'results'), inpu
           let args = ['--expose-gc', runner, '--input-root', inputRoot, '--run-dir', outputDirectory,
             '--cities', config.city, '--engines', config.engines.join(','), '--repeats', '1', '--cache-mode', 'native',
             '--seed', '20260816', '--routing-preference', 'fastest', '--time', config.time, '--max-walk', String(config.maxWalkKm),
-            '--max-transfers', String(config.maxTransfers), '--horizon', String(config.horizonMinutes)]
+            '--candidate-limit', String(config.candidateLimit), '--max-transfers', String(config.maxTransfers), '--horizon', String(config.horizonMinutes)]
           args.push('--random-count', String(config.randomCount), '--near-stop-count', String(config.nearStopCount), '--station-pivot-count', String(config.stationPivotCount), '--near-stop-min-m', String(config.nearStopMinMeters), '--near-stop-max-m', String(config.nearStopMaxMeters), '--station-pivot-min-m', String(config.stationPivotMinMeters), '--station-pivot-max-m', String(config.stationPivotMaxMeters))
           if (config.serviceDate) args.push('--service-date', config.serviceDate)
           if (reuseDirectory) args = ['--expose-gc', runner, '--input-root', inputRoot, '--run-dir', outputDirectory, '--cities', config.city, '--engines', config.engines.join(','), '--reuse-run', reuseDirectory]

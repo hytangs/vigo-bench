@@ -131,9 +131,9 @@ These are requested controls, not an assertion of identical native semantics:
 | MOTIS | Routed OSM transfers enabled at import and query; timetable values have minute precision. Returned policy violations, including walking distances impossible even allowing one minute of timestamp uncertainty, are explicitly rejected with the native candidate retained. |
 | ULTRA-OSM | Bounded endpoint search and boarding limit; selected walks reconstructed on its reduced OSM graph; transit geometry is stop chords. The adapter rejects returned journeys beyond the requested horizon; native horizon pruning is not equivalent. |
 | R5 / R5py | Explicit fixed-departure compatibility patch in [Runtime adapters](adapters.md#r5-and-r5py); native boarding slack remains 60 seconds. R5 uses JVM routing via JPype and r5py path extraction, not a pure-Java timing boundary. |
-| OTP | Public GraphQL full itinerary request; LIST_ALL bypasses presentation filtering, so the adapter selects the earliest returned transit candidate and rejects it if it exceeds the horizon. Native generalized-cost selection remains its own. |
+| OTP | Public GraphQL full itinerary request; LIST_ALL bypasses presentation filtering, so the adapter selects the earliest returned candidate passing the transit, transfer, endpoint-walking and horizon checks. Native generalized-cost selection remains its own. |
 | Valhalla | Multimodal API uses minute-precision transit times. The adapter rejects returned candidates violating the transit requirement, endpoint walking budgets, transfer cap or horizon, retaining the candidate and rejection reasons. This does not search for a compliant alternative. |
-| GraphHopper | A compatibility resource exposes the existing native walking-speed option over HTTP at the common 4.8 km/h; original upstream HTTP default is 5 km/h. The adapter rejects walk-only, over-transfer and over-horizon candidates with retained evidence. Native selection remains its own. |
+| GraphHopper | A compatibility resource exposes the existing native walking-speed option over HTTP at the common 4.8 km/h; original upstream HTTP default is 5 km/h. The adapter selects the shortest-duration returned candidate passing transit, transfer and horizon checks, retaining rejection diagnostics. Native candidate generation remains its own. |
 
 Do not publish a single cross-engine speed ranking without checking these
 boundaries and route feasibility on the same OD subset. A post-query policy
@@ -204,3 +204,73 @@ alternatives and complete coordinate itineraries need separate tables.
 
 Source: [runner and timing contract](../scripts/run-benchmark.mjs),
 [adapter timing boundaries](../scripts/benchmark-contracts.mjs).
+
+## Candidate-budget and paired-subset sensitivity
+
+The main chart measures **end-to-end itinerary interface performance**. R5 and
+R5py use patched R5 through Python/r5py; neither lane measures an untouched,
+pure-Java native search. Native counters with different boundaries must not be
+used to claim an algorithmic speed ratio.
+
+`candidateLimit` in `benchmark.json` (or `--candidate-limit` in the legacy CLI)
+requests 1–20 returned candidates from MOTIS, OTP and GraphHopper. The default
+remains 1 so existing experiments retain their explicit baseline. Larger limits
+are separate experiments: they can change native work, response size and the
+ready population. They do not guarantee exhaustive alternative search or that
+the engine will return the requested number. Valhalla and the other lanes do not
+inherit an unsupported alternative-search control.
+
+Each supported adapter chooses the earliest-arriving or shortest-duration
+candidate among returned candidates that pass its adapter checks. Native count,
+passing count, selected index and rejection reasons are retained under
+`candidateSelection` in query evidence. Rejected candidates remain blocked with
+`native_candidate_rejected`; they are not proof that no compliant route exists.
+These checks do not prove full journey feasibility or identical native semantics.
+
+For a controlled candidate experiment, reuse a frozen OD set and change only the
+candidate budget, writing a new result directory each time:
+
+```bash
+npm run bench -- --reuse-run results/run-BASE --engines MOTIS,OTP,GraphHopper --candidate-limit 5
+npm run bench -- --reuse-run results/run-BASE --engines MOTIS,OTP,GraphHopper --candidate-limit 10
+```
+
+The original sources, date and runtime settings must remain available. Candidate
+budget is part of recorded comparison controls and identity, so these executions
+must not be merged into one supposedly identical comparison. Repeat with the
+same selected engines and matching runtime binaries at budget 1 for the baseline.
+All additional native work and serialization remain charged to caller timing.
+
+New `comparison.json` files contain a `sensitivity` section with:
+
+- requested, submitted, unsubmitted, ready coverage, setup errors and outcome reasons;
+- common-ready, all-submitted, per-engine ready and excluded-ready distributions;
+- p50 ratios with explicit numerator/denominator for each population;
+- OD-type, transfer-count, route-duration, response-byte and geometry-presence strata.
+
+All-submission populations include query errors with measured timing. Setup
+failures and unsubmitted queries are counted separately and have no invented
+latency. Incomplete lanes retain partial distributions, but their ratios are null.
+Successful-duration and transfer strata depend on each engine's own answer;
+they are descriptive and may have different membership. Missing measurements
+remain unreported. Geometry presence is not geometry correctness or completeness;
+ULTRA-OSM is explicitly marked as providing simplified geometry.
+
+To analyze existing evidence without changing it:
+
+```bash
+node scripts/report-sensitivity.mjs results/run-BASE /path/outside/run/sensitivity.json
+```
+
+The command reads the saved run summary and query NDJSON, hashes the source files,
+and refuses to overwrite an output or write inside the retained run. It does not
+execute engines. It reports historical candidate diagnostics only when recorded;
+it cannot reconstruct missing measurements or validate historical binaries.
+
+R5's native 60-second boarding slack remains an explicit unresolved policy
+difference. `fairness.json` reports it separately from requested zero additional
+slack elsewhere. Compare transfer-sensitive cases with original GTFS rules and
+independent itinerary audits before interpreting shorter journeys as better
+routing. No unsupported R5 slack override or comparable native Java timer has
+been introduced. Quantitative city sensitivity and independent public input/result
+packages still require actual licensed inputs and new measured runs.

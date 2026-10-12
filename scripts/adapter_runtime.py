@@ -80,3 +80,11 @@ class ResidentHttpClient:
         except (OSError, http.client.HTTPException) as error:
             self.close()
             raise urllib.error.URLError(error) from error
+
+
+def candidate_limit(context):
+    """Bounded returned-candidate sensitivity; never an exhaustive-search claim."""
+    value = context.get('comparison', {}).get('candidateLimit', 1)
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 20:
+        raise ValueError('candidateLimit must be an integer from 1 to 20')
+    return value

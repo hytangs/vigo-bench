@@ -10,7 +10,7 @@ const read = (root, ...parts) => readEvidenceJson(root, path.join(root, ...parts
 const configFrom = (run, city, counts) => {
   const c = run.controls, p = c.comparison ?? {}, g = c.odGeneration ?? {}
   return { city: city.citySlug, serviceDate: city.service?.date ?? '', time: c.time ?? '08:00', maxWalkKm: c.maxWalkKm ?? 1.2,
-    maxTransfers: p.maxTransfers ?? 3, horizonMinutes: p.horizonMinutes ?? 240,
+    candidateLimit: p.candidateLimit ?? 1, maxTransfers: p.maxTransfers ?? 3, horizonMinutes: p.horizonMinutes ?? 240,
     randomCount: counts.random ?? 0, nearStopCount: counts.near_stop ?? 0, stationPivotCount: counts.station_pivot ?? 0,
     nearStopMinMeters: g.nearStopMinMeters ?? 0, nearStopMaxMeters: g.nearStopMaxMeters ?? 400,
     stationPivotMinMeters: g.stationPivotMinMeters ?? 800, stationPivotMaxMeters: g.stationPivotMaxMeters ?? 1200 }
@@ -49,12 +49,15 @@ export function listBenchmarks(root) {
       } catch { /* An interrupted generation can be retried from its definition. */ }
       const counts = rows.reduce((value, row) => { value[row.odType ?? 'unlabeled'] = (value[row.odType ?? 'unlabeled'] ?? 0) + 1; return value }, {})
       const identity = recording?.comparisonId ?? digest([city.citySlug, hash ?? item.id, city.service, run.controls.comparison, run.controls.time, run.controls.maxWalkKm, run.controls.cacheMode])
-      const id = launch?.benchmarkId ?? `bench-${identity.slice(0, 24)}`
+      let id = launch?.benchmarkId ?? `bench-${identity.slice(0, 24)}`
+      const existing = groups.get(id)
+      if (existing?.comparisonIdentity && existing.comparisonIdentity !== identity) id = `${id}-${digest(identity).slice(0, 16)}`
       let group = groups.get(id)
       if (!group) {
         group = { id, name: city.displayLabel ?? '', config: configFrom(run, city, counts), createdAt: run.startedAt ?? item.modifiedAt, attempts: [], sourceRun: null }
         groups.set(id, group)
       }
+      group.comparisonIdentity = identity
       group.cityLabel = city.city ?? city.citySlug
       group.pairCount = rows.length || group.pairCount || run.controls.requestedPairs
       group.typeCounts = rows.length ? counts : group.typeCounts

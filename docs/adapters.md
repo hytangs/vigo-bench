@@ -160,3 +160,13 @@ saved command, runtime snapshot and query fields before interpreting history.
 
 For native policy differences, see [Comparable controls](methodology.md#comparable-controls).
 For protocol and validation, see [Adapter development](development.md).
+
+## Returned-candidate sensitivity
+
+MOTIS, OTP and GraphHopper accept the benchmark `candidateLimit` control
+(default 1, maximum 20). Increasing it requests more native candidates in one
+call; there are no hidden retry requests. The adapter chooses a compliant
+candidate from those actually returned and retains selection diagnostics.
+Other interfaces have no new candidate-budget override. See
+[candidate-budget and subset sensitivity](methodology.md#candidate-budget-and-paired-subset-sensitivity)
+for the exact experiment scope and the separate R5 boarding-slack limitation.
