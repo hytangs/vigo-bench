@@ -13,8 +13,8 @@ artifacts; a path existing does not prove that its binary matches current source
 
 | Interface | Runtime / adapter | Path control |
 | --- | --- | --- |
-| VIGO | Engine 0.5 `vigo/public/vigo.mjs`; public resident `stream` with an explicit query kind and trace evidence. | `--vigo-cli`, `--vigo-kernel` |
-| VIGO-py | [Python API adapter](../scripts/python-api-adapter.py), VIGO-py 0.5, and the same selected Node executable, CLI and native addon as VIGO. | `--python`, `--vigo-cli`, `--vigo-kernel`, `--vigo-python-source` |
+| VIGO | Engine 0.5 or 1.0 `vigo/public/vigo.mjs`; public resident `stream` with an explicit query kind and trace evidence. | `--vigo-cli`, `--vigo-kernel` |
+| VIGO-py | [Python API adapter](../scripts/python-api-adapter.py), VIGO-py 0.5 or 1.0, and the same selected Node executable, CLI and native addon as VIGO. | `--python`, `--vigo-cli`, `--vigo-kernel`, `--vigo-python-source` |
 | MOTIS | `.engine-tools/motis/motis`; local HTTP interface via the [native adapter](../scripts/native-engine-adapter.py). | `--motis-binary` |
 | ULTRA-OSM | `.engine-tools/ultra/cmake-build-release2/` binaries and the [ULTRA adapter](../scripts/ultra-engine-adapter.mjs). | `--ultra-checkout`, `--ultra-network`, `--ultra-binary`, `--ultra-kernel`, `--ultra-add-graph` |
 | R5 / R5py | Corrected JAR and r5py source via the [R5 adapter](../scripts/r5-engine-adapter.py). | `--python`, `--r5-jar`, `--r5py-source` |
@@ -22,19 +22,23 @@ artifacts; a path existing does not prove that its binary matches current source
 | Valhalla | `.engine-tools/valhalla-venv/bin/python` and `.engine-tools/valhalla-resources/timezones.sqlite`. | `--valhalla-python`, `--valhalla-timezones` |
 | GraphHopper | `.engine-tools/graphhopper/graphhopper-walk-speed.jar` via the [GraphHopper adapter](../scripts/graphhopper-engine-adapter.py). | `--graphhopper-jar` |
 
-## VIGO 0.5
+## VIGO 0.5 and 1.0
 
 Build the selected CLI runtime before a future measurement with
 `npm --prefix ../vigo run build:cli-runtime`. The harness checks the capability
-response for Engine 0.5, the public stream, and trace output before preparing a
-City. Both VIGO lanes build fresh Cities; a retained `vigo.city.v1` manifest
-alone is insufficient because the prepared indexes changed in 0.5.
+response for Engine 0.5 or 1.0, the public stream, and trace output before
+preparing a City. Both VIGO lanes build fresh Cities by default. Optional
+[City reuse](workflow.md#reuse-prepared-vigo-cities) checks recorded inputs and
+runtime fingerprints and excludes preparation timing. It accepts City format 1
+from supported engine versions; format compatibility is still enforced by the reader.
 
 Each request carries its service date, clock and routing limits. Workload IDs,
 repeat numbers and the caller's complete-duration filter stay in the harness.
 VIGO-py receives the same request controls and preserves arrive-by queries;
-unsupported wrapper options fail explicitly. Its default source is the sibling
-`vigo-py` checkout; `VIGO_BENCH_PYTHON_SOURCE` remains an environment override.
+unsupported wrapper options fail explicitly. Source discovery tries sibling
+`vigo/python`, then sibling `vigo-py`, looking for `vigo/__init__.py`. Use
+`--vigo-python-source` or `VIGO_BENCH_PYTHON_SOURCE` to select a source explicitly.
+The adapter and provenance recorder use that same selection.
 
 Provenance hashes the selected CLI, Node executable, native addon and Python
 package sources. Engine capability output and the Python preparation record
@@ -170,3 +174,10 @@ candidate from those actually returned and retains selection diagnostics.
 Other interfaces have no new candidate-budget override. See
 [candidate-budget and subset sensitivity](methodology.md#candidate-budget-and-paired-subset-sensitivity)
 for the exact experiment scope and the separate R5 boarding-slack limitation.
+
+
+MOTIS observations retain every returned policy-rejected itinerary in
+`rejectedCandidates`, including when a different candidate passes. The dashboard
+shows their rejection reasons and departure-to-arrival durations separately from
+validated results. This does not prove global optimality or unreachability;
+selection is limited to the native candidates actually returned.

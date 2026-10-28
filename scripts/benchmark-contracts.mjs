@@ -14,7 +14,7 @@ const contracts = {
       'Trace is requested for detailed evidence. Its formatting, bytes and caller decoding remain charged to endToEndMs. Missing counters remain missing; search-only time is never substituted for a full-call timer.',
     ],
   },
-  // scripts/python-api-adapter.py; ../vigo-py/vigo/model.py: City._route,
+  // scripts/python-api-adapter.py; VIGO-py vigo/model.py: City._route,
   // _QueryStream, Result.to_json.
   'VIGO-py': {
     adapterBoundary: 'City.route through Result.to_json(indent=None), including any lazy opening inside that call. Includes Python validation/wrapper work, runtime IPC, plan decoding and result serialization; the final benchmark envelope and stdout write occur afterward.',

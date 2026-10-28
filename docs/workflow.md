@@ -290,10 +290,37 @@ date and routing controls separately. A valid CSV uses unique IDs and the catego
 population; it creates a new study population, not a same-population rerun. These three source flags
 are mutually exclusive.
 
-Reusing ODs does not reuse the prepared network. Keep the original input files
+Reusing ODs alone does not reuse the prepared network. Keep the original input files
 and runtime provenance available, and compare the new `context.json` with the
 prior context before combining results. The same seed alone does not establish
 the same population when OSM or GTFS inputs change.
+
+## Reuse prepared VIGO Cities
+
+The legacy runner can copy a retained City into a new run:
+
+```bash
+node scripts/run-benchmark.mjs --reuse-run results/run-PRIOR \
+  --reuse-vigo-builds results/run-PRIOR --engines VIGO,VIGO-py
+```
+
+The source run must have recorded input digests and CLI, native-addon and Node
+fingerprints. Matching OSM/GTFS digests are required. VIGO-py can reuse the VIGO
+lane's City when its own is absent; if neither lane contains a City, preparation
+runs normally. A missing provenance manifest or failed identity check is a setup
+failure with no submitted queries. Existing output Cities are never overwritten.
+
+Changing readers requires `--allow-reused-runtime-change`; both the recorded and
+current fingerprints are retained in `reused-preparation.json`. This flag does
+not permit missing fingerprints or different input digests. The reader still
+checks City compatibility. Saved provenance does not prove retained City files
+were never modified; use immutable, trusted evidence directories.
+
+Reused lanes report `coldPrep.status: reused`, null preparation time/RSS, and
+null combined preparation-plus-query totals. Lane elapsed time includes copying
+and validation; query timers retain their documented boundaries. Reuse does not
+establish a cold filesystem-cache state. Treat reader-change comparisons and
+fresh-build performance measurements as distinct experiments.
 
 ## Finish a run
 

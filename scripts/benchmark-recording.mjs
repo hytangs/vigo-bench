@@ -4,7 +4,7 @@ import os from 'node:os'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { writeJsonAtomic } from './benchmark-evidence.mjs'
-import { resolveVigoKernel } from './vigo-runtime.mjs'
+import { resolveVigoKernel, resolveVigoPythonSource } from './vigo-runtime.mjs'
 
 export const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 export async function fingerprint(file) {
@@ -54,7 +54,7 @@ export async function recordProvenance(root, output, options, engines = []) {
     runtimes.vigoKernel = kernel && fs.existsSync(kernel) ? await fingerprint(kernel) : { path: kernel, available: false }
   }
   if (engines.includes('VIGO-py')) {
-    const source = path.resolve(options.vigoPythonSource ?? process.env.VIGO_BENCH_PYTHON_SOURCE ?? path.resolve(root, '../vigo-py'))
+    const source = resolveVigoPythonSource(root, options.vigoPythonSource)
     const pythonFiles = []
     const packageDirectory = path.join(source, 'vigo')
     if (fs.existsSync(packageDirectory)) {

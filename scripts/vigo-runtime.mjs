@@ -2,10 +2,21 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+export function resolveVigoPythonSource(root, explicit = process.env.VIGO_BENCH_PYTHON_SOURCE) {
+  if (explicit?.trim()) return path.resolve(explicit)
+  const candidates = [path.resolve(root, '../vigo/python'), path.resolve(root, '../vigo-py')]
+  return candidates.find(source => fs.existsSync(path.join(source, 'vigo', '__init__.py'))) ?? candidates[0]
+}
+
+export function supportedVigoVersion(version) {
+  return /^(?:0\.5|1\.0)\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u.test(version ?? '')
+}
+
 export function resolveVigoKernel(cli, explicit = process.env.VIGO_NATIVE_ROUTING_KERNEL) {
   if (explicit?.trim()) return path.resolve(explicit)
   const directory = path.dirname(cli)
   return [path.join(directory, 'vigo-routing-kernel.node'),
+    path.resolve(directory, '../crates/vigo-runtime/vigo-routing-kernel.node'),
     path.resolve(directory, '../native/vigo-routing-kernel/vigo-routing-kernel.node'),
     path.resolve(directory, '../../native/vigo-routing-kernel/vigo-routing-kernel.node')]
     .find(file => fs.existsSync(file)) ?? null
@@ -19,11 +30,11 @@ export function checkVigoRuntime(cli, kernel) {
   let capabilities
   try { capabilities = JSON.parse(result.stdout) } catch { /* Rejected below. */ }
   if (result.error || result.status !== 0 || capabilities?.schemaVersion !== 'vigo.capabilities.v3'
-    || !/^0\.5\.\d+(?:$|[-+])/u.test(capabilities?.productVersion ?? '')
+    || !supportedVigoVersion(capabilities?.productVersion)
     || capabilities?.apiVersion !== '1.0'
     || !['build', 'stream', 'route', 'matrix', 'reach'].every(name => capabilities?.publicCliCommands?.includes(name))
     || !capabilities?.output?.diagnostics?.includes('trace')) {
-    throw new Error(`VIGO benchmark requires Engine 0.5 with the public stream API. Rebuild the selected CLI runtime. ${result.error?.message ?? result.stderr?.trim() ?? ''}`.trim())
+    throw new Error(`VIGO benchmark requires Engine 0.5 or 1.0 with the public stream API. Rebuild the selected CLI runtime. ${result.error?.message ?? result.stderr?.trim() ?? ''}`.trim())
   }
   return capabilities
 }
@@ -31,8 +42,8 @@ export function checkVigoRuntime(cli, kernel) {
 export function readVigoCityManifest(directory) {
   const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'network.json'), 'utf8'))
   if (manifest?.schemaVersion !== 'vigo.city.v1' || manifest?.cityFormatVersion !== 1
-    || !/^0\.5\.\d+(?:$|[-+])/u.test(manifest?.productVersion ?? '')) {
-    throw new Error('This runner requires a City rebuilt with Engine 0.5; retained older Cities must not be reused.')
+    || !supportedVigoVersion(manifest?.productVersion)) {
+    throw new Error('This runner requires a City rebuilt with Engine 0.5 or 1.0; retained older Cities must not be reused.')
   }
   return manifest
 }

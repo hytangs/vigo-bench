@@ -70,7 +70,11 @@ class AdapterOutcomeTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "MOTIS response"):
                     adapter.motis_query(REQUEST, "http://unused")
         with patch.object(adapter, "http_json", return_value={"itineraries": []}):
-            self.assertEqual(adapter.motis_query(REQUEST, "http://unused")["status"], "blocked")
+            result = adapter.motis_query(REQUEST, "http://unused")
+            self.assertEqual(result["status"], "blocked")
+            self.assertEqual(result["plan"]["diagnostics"]["outcomeReason"], "native_no_itinerary")
+            self.assertEqual(result["plan"]["diagnostics"]["policyPassingCandidateCount"], 0)
+            self.assertEqual(result["rejectedCandidates"], [])
 
     def test_motis_rejects_impossible_walk_even_with_minute_precision(self):
         adapter = self.load("native-engine-adapter")
@@ -102,6 +106,10 @@ class AdapterOutcomeTests(unittest.TestCase):
         self.assertEqual(diagnostics['selectedNativeIndex'], 2)
         self.assertEqual(diagnostics['policyPassingCandidateCount'], 2)
         self.assertEqual(diagnostics['nativeCandidateRejections'][0]['nativeIndex'], 1)
+        self.assertEqual(diagnostics['nativeCandidateRejections'][0]['durationMinutes'], 20)
+        self.assertEqual(result['rejectedCandidates'], [{
+            'nativeIndex': 1, 'durationMinutes': 20,
+            'policyViolations': ['walk_faster_than_common_speed'], 'itinerary': rejected}])
 
     def test_motis_does_not_accept_unresolved_walking_placeholders(self):
         adapter = self.load("native-engine-adapter")
@@ -126,6 +134,7 @@ class AdapterOutcomeTests(unittest.TestCase):
         self.assertEqual(result['plan']['diagnostics']['outcomeReason'], 'native_candidate_rejected')
         self.assertFalse(result['plan']['diagnostics']['unreachabilityProven'])
         self.assertEqual(result['plan']['diagnostics']['policyPassingCandidateCount'], 0)
+        self.assertEqual(result['rejectedCandidates'][0]['itinerary'], itinerary)
 
     def test_motis_arrival_order_uses_instants_and_duration_includes_initial_wait(self):
         adapter = self.load("native-engine-adapter")

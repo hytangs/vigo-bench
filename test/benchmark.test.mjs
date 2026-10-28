@@ -65,6 +65,23 @@ test('policy-rejected native candidates survive evidence normalization', () => {
   assert.deepEqual(result.itinerary.diagnostics, plan.diagnostics)
 })
 
+test('accepted native itineraries retain rejected alternatives and selection diagnostics', () => {
+  const itinerary = { duration: 225 * 60, legs: [{ mode: 'BUS' }] }
+  const rejectedCandidates = [{ nativeIndex: 1, durationMinutes: 64, policyViolations: ['walk_faster_than_common_speed'], itinerary: { legs: [{ mode: 'WALK', distance: 433, duration: 120 }] } }]
+  const diagnostics = { nativeCandidateCount: 2, policyPassingCandidateCount: 1, selectedNativeIndex: 0,
+    nativeCandidateRejections: rejectedCandidates.map(({ itinerary, ...candidate }) => candidate) }
+  const result = normalizeObservation({ id: 'a' }, {
+    status: 'ready', itinerary, rejectedCandidates, plan: { status: 'ready', durationMinutes: 225, diagnostics },
+  }, 20)
+  assert.equal(result.status, 'ready')
+  assert.deepEqual(result.itinerary, itinerary)
+  assert.deepEqual(result.diagnostics, diagnostics)
+  assert.deepEqual(result.rejectedCandidates, rejectedCandidates)
+  const saved = JSON.parse(JSON.stringify(result))
+  assert.equal(saved.rejectedCandidates[0].itinerary.legs[0].distance, 433)
+  assert.equal(saved.diagnostics.nativeCandidateRejections[0].durationMinutes, 64)
+})
+
 test('current VIGO adapter builds a City and queries the resident stream with earliest arrival', () => {
   const context = { city: { slug: 'test', osmPath: '/input/map.pbf', gtfsPaths: ['/input/a.zip', '/input/b.zip'] },
     workdir: '/run/vigo', contextPath: '/run/context.json', od: { odPath: '/run/od.csv' },
@@ -75,7 +92,7 @@ test('current VIGO adapter builds a City and queries the resident stream with ea
     '--output=/run/vigo/network', '--gtfs=/input/a.zip', '--gtfs=/input/b.zip'])
   assert.match(prepareCommand('VIGO', { ...context, routingPreference: 'balanced' }, options).reason, /earliest_arrival/)
   assert.match(queryCommand('VIGO', context, options, { schemaVersion: 'vigo.cli.build-network.v1' }).reason, /current City/)
-  const manifest = { schemaVersion: 'vigo.city.v1', productVersion: '0.5.0' }
+  const manifest = { schemaVersion: 'vigo.city.v1', cityFormatVersion: 1, productVersion: '0.5.0' }
   const query = queryCommand('VIGO', context, options, manifest)
   assert(query.command.includes('stream'))
   assert(query.command.includes('--diagnostics=trace'))

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { renderSensitivityRows, distribution, filterObservations, formatNumber, splitPopulation, filterOdRequests } from '../dashboard/app.js'
+import { renderCandidateDiagnostics, renderSensitivityRows, distribution, filterObservations, formatNumber, splitPopulation, filterOdRequests } from '../dashboard/app.js'
 
 test('benchmark size presets and custom sizes preserve the exact requested total', () => {
   for (const size of [1, 2, 10, 30, 300, 2000, 3000, 10001]) {
@@ -60,3 +60,19 @@ test('live sensitivity table shows excluded successes and never times coordinate
   assert.doesNotMatch(renderSensitivityRows(rows,['A','B']), /999/);
   assert.match(renderSensitivityRows(rows,['<unsafe>']), /&lt;unsafe&gt;/);
 });
+
+test('accepted routes expose faster rejected alternatives without calling them valid routes', () => {
+  const rendered = renderCandidateDiagnostics({ status: 'ready', diagnostics: {
+    nativeCandidateCount: 2, policyPassingCandidateCount: 1, selectedNativeIndex: 0,
+    nativeCandidateRejections: [{ nativeIndex: 1, durationMinutes: 64, policyViolations: ['walk_faster_than_common_speed', '<script>'] }],
+  } })
+  assert.match(rendered, /1 of 2 passed/)
+  assert.match(rendered, /Candidate 2 · 64 min/)
+  assert.match(rendered, /Walking time is too short/)
+  assert.match(rendered, /not validated journey results/)
+  assert.match(rendered, /&lt;script&gt;/)
+  assert.doesNotMatch(rendered, /<script>/)
+  assert.equal(renderCandidateDiagnostics({ status: 'ready' }), '')
+  const blocked = renderCandidateDiagnostics({ itinerary: { diagnostics: { nativeCandidateCount: 0, policyPassingCandidateCount: 0 } } })
+  assert.match(blocked, /0 of 0 passed/)
+})

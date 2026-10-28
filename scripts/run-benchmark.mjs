@@ -10,7 +10,7 @@ import { percentile, timingDistribution, timingSummary, summarizeByOdType } from
 import { createProgressCheckpoint, writeJsonAtomic } from './benchmark-evidence.mjs'
 import { checkPreparationSpace } from './benchmark-storage.mjs'
 import { vigoResponseParts } from './vigo-results.mjs'
-import { checkVigoRuntime, resolveVigoKernel, vigoRouteRequest } from './vigo-runtime.mjs'
+import { checkVigoRuntime, readVigoCityManifest, resolveVigoKernel, resolveVigoPythonSource, supportedVigoVersion, vigoRouteRequest } from './vigo-runtime.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { performance } from 'node:perf_hooks'
 import { once } from 'node:events'
@@ -774,6 +774,9 @@ function normalizeObservation(request, payload, wallMs) {
     nativeStreetPathCacheMisses: finiteNumber(searchStats.nativeStreetPathCacheMisses),
     nativeStreetPathCacheDisabled: typeof searchStats.nativeStreetPathCacheDisabled === 'boolean' ? searchStats.nativeStreetPathCacheDisabled : null,
     detail: payload?.error?.message ?? payload?.error ?? plan?.detail ?? payload?.detail ?? null,
+    ...(plan?.diagnostics && typeof plan.diagnostics === 'object' && !Array.isArray(plan.diagnostics)
+      ? { diagnostics: plan.diagnostics } : {}),
+    ...(Array.isArray(payload?.rejectedCandidates) ? { rejectedCandidates: payload.rejectedCandidates } : {}),
     itinerary: durationRejected ? null : payload?.itinerary ?? plan,
     ...(durationRejected ? { rejectedItinerary: payload?.itinerary ?? plan }
       : payload?.rejectedItinerary ? { rejectedItinerary: payload.rejectedItinerary } : {}),
@@ -1429,7 +1432,7 @@ function vigoEnvironment(context, phase, engine, options) {
   return { ...commonEnvironment(context, phase, engine),
     VIGO_BENCH_VIGO_CLI: options.vigoCli,
     VIGO_BENCH_VIGO_COMMAND_JSON: JSON.stringify([process.execPath, options.vigoCli]),
-    VIGO_BENCH_PYTHON_SOURCE: options.vigoPythonSource ?? process.env.VIGO_BENCH_PYTHON_SOURCE ?? path.resolve(BENCH_ROOT, '../vigo-py'),
+    VIGO_BENCH_PYTHON_SOURCE: resolveVigoPythonSource(BENCH_ROOT, options.vigoPythonSource),
     ...(options.vigoKernel ? { VIGO_NATIVE_ROUTING_KERNEL: options.vigoKernel } : {}),
   }
 }
@@ -1437,7 +1440,7 @@ function vigoEnvironment(context, phase, engine, options) {
 function prepareCommand(engine, context, options) {
   const kind = ENGINE_DEFINITIONS.get(engine).kind
   if (['vigo-python', 'vigo-cli'].includes(kind) && context.routingPreference !== 'fastest') {
-    return { command: null, env: null, reason: 'VIGO 0.5 requires earliest_arrival; select --routing-preference fastest for this benchmark.' }
+    return { command: null, env: null, reason: 'VIGO benchmark requires earliest_arrival; select --routing-preference fastest for this benchmark.' }
   }
   if (kind === 'vigo-python') return { command: [options.python, path.join(BENCH_ROOT, 'scripts', 'python-api-adapter.py')],
     env: vigoEnvironment(context, 'prepare', engine, options), reason: null }
@@ -1493,8 +1496,9 @@ function prepareCommand(engine, context, options) {
 function queryCommand(engine, context, options, preparedPayload) {
   const kind = ENGINE_DEFINITIONS.get(engine).kind
   if (['vigo-cli', 'vigo-python'].includes(kind) && (preparedPayload?.schemaVersion !== 'vigo.city.v1'
-    || !/^0\.5\.\d+(?:$|[-+])/u.test(preparedPayload?.productVersion ?? ''))) {
-    return { command: null, env: null, reason: 'VIGO requires a current City built with Engine 0.5 (vigo.city.v1); rebuild with the selected runtime.' }
+    || preparedPayload?.cityFormatVersion !== 1
+    || !supportedVigoVersion(preparedPayload?.productVersion))) {
+    return { command: null, env: null, reason: 'VIGO requires a current City built with Engine 0.5 or 1.0 (vigo.city.v1); rebuild with the selected runtime.' }
   }
   if (kind === 'vigo-python') return { command: [options.python, path.join(BENCH_ROOT, 'scripts', 'python-api-adapter.py')],
     env: vigoEnvironment(context, 'query', engine, options), reason: null }
@@ -1633,9 +1637,57 @@ async function runEngine(context, engine, options) {
       return finish()
     }
   }
-  process.stderr.write(`[${new Date().toISOString()}] ${context.city.slug}/${engine} building fresh network\n`)
-  const prepResult = await runSimpleCommand(prep.command, { cwd: workdir, env: prep.env,
-    stdoutPath: path.join(workdir, 'prepare.stdout'), stderrPath: path.join(workdir, 'prepare.stderr') })
+  let prepResult
+  try {
+    const reuseDirectory = options.reuseVigoBuilds && ['VIGO', 'VIGO-py'].includes(engine)
+      ? [path.basename(workdir), 'vigo'].map(lane => path.join(options.reuseVigoBuilds, context.city.slug, lane))
+        .find(directory => fs.existsSync(path.join(directory, 'network/network.json'))) : null
+    if (options.reuseVigoBuilds && !fs.existsSync(path.join(options.reuseVigoBuilds, 'provenance/manifest.json'))) {
+      throw new Error('Reused City run is missing its provenance manifest')
+    }
+    if (reuseDirectory) {
+      const previous = JSON.parse(fs.readFileSync(path.join(options.reuseVigoBuilds, 'provenance/manifest.json'), 'utf8'))
+      const readerChanges = {}
+      for (const [key, file] of [['vigoCli', options.vigoCli], ['vigoKernel', options.vigoKernel], ['vigoNode', process.execPath]]) {
+        if (!file) throw new Error(`Missing reused City reader: ${key}`)
+        const preparedWith = previous.runtimes?.[key]
+        if (!/^[a-f0-9]{64}$/u.test(preparedWith?.sha256 ?? '')) throw new Error(`Missing reused City runtime fingerprint: ${key}`)
+        const current = await fingerprint(file)
+        if (current.sha256 !== preparedWith.sha256) {
+          if (!options.allowReusedRuntimeChange) throw new Error(`Reused City runtime mismatch: ${key}`)
+          readerChanges[key] = { preparedWith, queriedWith: current }
+        }
+      }
+      const sourceRecording = JSON.parse(fs.readFileSync(path.join(reuseDirectory, '../recording.json'), 'utf8'))
+      const currentRecording = JSON.parse(fs.readFileSync(path.join(context.cityDirectory, 'recording.json'), 'utf8'))
+      const inputDigest = sourceRecording.inputs?.digest
+      if (!/^[a-f0-9]{64}$/u.test(inputDigest ?? '') || inputDigest !== currentRecording.inputs?.digest) {
+        throw new Error('Reused City input identity mismatch or missing digest')
+      }
+      const reusedSource = path.join(reuseDirectory, 'network')
+      const reusedTarget = path.join(workdir, 'network')
+      const payload = readVigoCityManifest(reusedSource)
+      payload.network = vigoNetworkSize(payload, context.commonNetworkSize)
+      if (fs.existsSync(reusedTarget)) throw new Error('Reused City target already exists')
+      fs.cpSync(reusedSource, reusedTarget, { recursive: true, force: false, errorOnExist: true, mode: fs.constants.COPYFILE_FICLONE })
+      prepResult = { code: 0, stdout: JSON.stringify(payload), elapsedMs: null, maxRssBytes: null, command: [], reused: true }
+      writeJsonAtomic(path.join(workdir, 'reused-preparation.json'), {
+        source: reuseDirectory, inputDigest, preparationMeasured: false, sourceNode: previous.node, readerChanges,
+        limitation: 'Input and runtime hashes come from the saved run; they do not verify that retained City files were never modified.',
+      })
+      process.stderr.write(`[${new Date().toISOString()}] ${context.city.slug}/${engine} reusing City with matching recorded inputs; preparation not measured\n`)
+    } else {
+      process.stderr.write(`[${new Date().toISOString()}] ${context.city.slug}/${engine} building fresh network\n`)
+      prepResult = await runSimpleCommand(prep.command, { cwd: workdir, env: prep.env,
+        stdoutPath: path.join(workdir, 'prepare.stdout'), stderrPath: path.join(workdir, 'prepare.stderr') })
+    }
+  } catch (error) {
+    row.status = 'error'
+    row.setupErrors = 1
+    row.coldPrep = { status: 'error', ms: null }
+    row.errors.push(error.message)
+    return finish()
+  }
   if (prepResult.interruptionSignal) {
     row.status = 'error'
     row.setupErrors = 1
@@ -1647,7 +1699,7 @@ async function runEngine(context, engine, options) {
     throw Object.assign(new Error(row.errors[0]), { code: 'BENCHMARK_INTERRUPTED' })
   }
   const prepPayload = parseJsonOutput(prepResult.stdout)
-  row.coldPrep = { status: prepResult.code === 0 && !prepResult.error ? 'ready' : 'error', ms: Number(prepResult.elapsedMs.toFixed(3)), command: prepResult.command }
+  row.coldPrep = { status: prepResult.reused ? 'reused' : prepResult.code === 0 && !prepResult.error ? 'ready' : 'error', ms: prepResult.elapsedMs === null ? null : Number(prepResult.elapsedMs.toFixed(3)), command: prepResult.command }
   row.coldPrepRss = { bytes: prepResult.maxRssBytes, MiB: mib(prepResult.maxRssBytes) }
   if (prepResult.code !== 0 || prepResult.error) {
     row.status = 'error'
@@ -1675,7 +1727,7 @@ async function runEngine(context, engine, options) {
     row.peakRss = row.coldPrepRss
     return finish()
   }
-  row.requiredInputs = { osm: context.city.osmPath, gtfs: context.city.gtfsPaths, preparationLog: 'prepare.stdout + prepare.stderr' }
+  row.requiredInputs = { osm: context.city.osmPath, gtfs: context.city.gtfsPaths, preparationLog: prepResult.reused ? 'reused-preparation.json' : 'prepare.stdout + prepare.stderr' }
   const query = queryCommand(engine, context, { ...options, vigoCapabilities: row.runtime?.capabilities }, prepPayload)
   if (query.reason) {
     row.status = 'error'
@@ -1756,8 +1808,8 @@ async function runEngine(context, engine, options) {
     processRequestsPerSecond: observations.length && queryResult.process.elapsedMs > 0 ? observations.length * 1000 / queryResult.process.elapsedMs : null,
     readyRoutesPerSecond: observations.length && queryResult.process.elapsedMs > 0 ? counts.ready * 1000 / queryResult.process.elapsedMs : null,
     endToEndCoverage: row.hot.endToEnd.coverage,
-    preparationAndQueryMs: prepResult.elapsedMs + queryResult.process.elapsedMs,
-    amortizedPreparationAndQueryMsPerRequest: observations.length ? (prepResult.elapsedMs + queryResult.process.elapsedMs) / observations.length : null,
+    preparationAndQueryMs: prepResult.reused ? null : prepResult.elapsedMs + queryResult.process.elapsedMs,
+    amortizedPreparationAndQueryMsPerRequest: !prepResult.reused && observations.length ? (prepResult.elapsedMs + queryResult.process.elapsedMs) / observations.length : null,
     complete: observations.length === context.requests.length && queryResult.process.code === 0 && !queryResult.process.timedOut,
     runtimeOpenMs: observations[0]?.timing?.openMs ?? null,
     boundary: TIMING_CONTRACT.process,
@@ -1780,7 +1832,7 @@ async function runEngine(context, engine, options) {
       objective: 'earliest_arrival',
       transport: engine === 'VIGO' ? (query.command.includes('--stream-output=detailed') ? 'resident stream CLI with lossless detailed evidence, no duplicate public projection' : 'public stream CLI with explicit route queries and trace evidence') : 'public Python City.route and Result.to_json through the resident runtime',
       resultCache: 'absent; street-cache acknowledgement is recorded separately',
-      preparedNetworkReused: false,
+      preparedNetworkReused: prepResult.reused === true,
     }
   }
   row.byOdType = summarizeByOdType(observations, requestById)
@@ -1859,9 +1911,11 @@ function usage() {
     '  --run-dir PATH          Write this run to an explicit directory',
     '  --query-timeout-ms N    Per-request and shutdown deadline; 0 disables (default: 0)',
     '  --od-file PATH          Use one explicit OD CSV; count defaults to all rows',
+    '  --reuse-vigo-builds PATH Reuse available Cities from the same engine/input revision; preparation is not measured',
+    '  --allow-reused-runtime-change Explicitly compare an upgraded reader on identical City inputs; record both runtime fingerprints',
     '  --vigo-cli PATH         Current VIGO public/vigo.mjs',
     '  --vigo-kernel PATH      Native addon for that CLI (otherwise resolved beside it)',
-    '  --vigo-python-source PATH  Current vigo-py checkout (default: sibling vigo-py)',
+    '  --vigo-python-source PATH  Python package source (auto: sibling vigo/python, then vigo-py)',
     '  --python PATH           Python executable (default: python3)',
     '  --r5-jar PATH           R5/R5py runtime JAR',
     '  --r5py-source PATH      Corrected r5py source directory',
@@ -1947,8 +2001,10 @@ async function main() {
     cacheMode,
     comparison,
     vigoCli,
+    allowReusedRuntimeChange: args.has('allow-reused-runtime-change'),
+    reuseVigoBuilds: args.has('reuse-vigo-builds') ? path.resolve(lastArgument(args, 'reuse-vigo-builds', '')) : null,
     vigoKernel: resolveVigoKernel(vigoCli, lastArgument(args, 'vigo-kernel', process.env.VIGO_NATIVE_ROUTING_KERNEL ?? '')),
-    vigoPythonSource: path.resolve(lastArgument(args, 'vigo-python-source', process.env.VIGO_BENCH_PYTHON_SOURCE ?? path.resolve(BENCH_ROOT, '../vigo-py'))),
+    vigoPythonSource: resolveVigoPythonSource(BENCH_ROOT, lastArgument(args, 'vigo-python-source', process.env.VIGO_BENCH_PYTHON_SOURCE)),
     python: lastArgument(args, 'python', process.env.PYTHON ?? 'python3'),
     nativeAdapter: path.join(BENCH_ROOT, 'scripts', 'native-engine-adapter.py'),
     r5Adapter: path.join(BENCH_ROOT, 'scripts', 'r5-engine-adapter.py'),

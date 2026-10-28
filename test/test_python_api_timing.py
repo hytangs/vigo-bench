@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ADAPTER = Path(__file__).parents[1] / 'scripts/python-api-adapter.py'
 spec = importlib.util.spec_from_file_location('python_adapter', ADAPTER)
@@ -17,10 +18,10 @@ spec.loader.exec_module(adapter)
 class PythonApiTimingTests(unittest.TestCase):
     def test_declared_timer_retains_lazy_opening(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             (root / 'vigo.py').write_text('''
 import json
-__version__ = '0.5.0'
+__version__ = '1.0.0rc2'
 class City:
     def __enter__(self): return self
     def __exit__(self,*args): pass
@@ -68,3 +69,17 @@ def open(*args,**kwargs):
                 adapter.route_options(invalid, context)
         with self.assertRaisesRegex(ValueError, 'earliest_arrival'):
             adapter.route_options({}, dict(context, routingPreference='balanced'))
+
+
+    def test_wrapper_discovery_supports_both_source_layouts(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"VIGO_BENCH_PYTHON_SOURCE": ""}):
+            root = Path(directory).resolve()
+            standalone, integrated = root / "vigo-py", root / "vigo" / "python"
+            (standalone / "vigo").mkdir(parents=True)
+            (standalone / "vigo" / "__init__.py").write_text("# fixture")
+            self.assertEqual(adapter.resolve_wrapper_source(root), standalone)
+            (integrated / "vigo").mkdir(parents=True)
+            (integrated / "vigo" / "__init__.py").write_text("# fixture")
+            self.assertEqual(adapter.resolve_wrapper_source(root), integrated)
+            with patch.dict(os.environ, {"VIGO_BENCH_PYTHON_SOURCE": str(standalone)}):
+                self.assertEqual(adapter.resolve_wrapper_source(root), standalone)

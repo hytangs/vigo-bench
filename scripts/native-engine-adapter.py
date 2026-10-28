@@ -419,9 +419,10 @@ def motis_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
         raise RuntimeError("MOTIS response contains an invalid itinerary")
     diagnostics = {"algorithm": "MOTIS native point query", "walkingNetwork": "osm",
                    "timetableView": False, "requestedCandidateLimit": candidate_limit(CONTEXT), "nativeCandidateCount": len(candidates),
+                   "policyPassingCandidateCount": 0, "nativeCandidateRejections": [],
                    "selectionScope": "earliest arrival among returned candidates passing adapter checks; global optimality unproven"}
     if not candidates:
-        return {"id": request["id"], "status": "blocked", "queryMs": elapsed, "detail": "MOTIS returned no itinerary.",
+        return {"id": request["id"], "status": "blocked", "queryMs": elapsed, "detail": "MOTIS returned no itinerary.", "rejectedCandidates": [],
                 "plan": {"status": "blocked", "diagnostics": {**diagnostics, "outcomeReason": "native_no_itinerary"}}}
     departure = dt.datetime.fromisoformat(local_departure())
     evaluated = []
@@ -435,12 +436,18 @@ def motis_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
     diagnostics.update({"policyPassingCandidateCount": len(passing),
                         "nativeCandidateRejections": [
                             {"nativeIndex": candidate['nativeIndex'], "endTime": candidate['itinerary']['endTime'],
+                             "durationMinutes": candidate['durationMinutes'],
                              "policyViolations": candidate['policyViolations']}
                             for candidate in evaluated if candidate['policyViolations']]})
+    rejected_candidates = [
+        {"nativeIndex": candidate['nativeIndex'], "durationMinutes": candidate['durationMinutes'],
+         "policyViolations": candidate['policyViolations'], "itinerary": candidate['itinerary']}
+        for candidate in evaluated if candidate['policyViolations']]
     if not passing:
         earliest = evaluated[0]
         return {"id": request["id"], "status": "blocked", "queryMs": elapsed,
                 "detail": "Every returned MOTIS candidate violates requested controls; no further native search was run.",
+                "rejectedCandidates": rejected_candidates,
                 "rejectedItinerary": earliest['itinerary'],
                 "plan": {"status": "blocked", "diagnostics": {**diagnostics,
                     "outcomeReason": "native_candidate_rejected", "policyViolations": earliest['policyViolations'], "unreachabilityProven": False}}}
@@ -448,6 +455,7 @@ def motis_query(request: dict[str, Any], base_url: str) -> dict[str, Any]:
     itinerary = selected['itinerary']
     diagnostics['selectedNativeIndex'] = selected['nativeIndex']
     return {"id": request["id"], "status": "ready", "queryMs": elapsed, "itinerary": itinerary,
+            "rejectedCandidates": rejected_candidates,
             "plan": {"status": "ready", "durationMinutes": selected['durationMinutes'],
                      "transfers": int(itinerary.get("transfers", 0)), "diagnostics": diagnostics}}
 

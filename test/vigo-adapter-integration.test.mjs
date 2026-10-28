@@ -5,10 +5,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { resolveVigoPythonSource } from '../scripts/vigo-runtime.mjs'
+import { fingerprint } from '../scripts/benchmark-recording.mjs'
 import { runEngine } from '../scripts/run-benchmark.mjs'
 
-const wrapperSource = process.env.VIGO_BENCH_PYTHON_SOURCE
-  ?? fileURLToPath(new URL('../../vigo-py', import.meta.url))
+const wrapperSource = resolveVigoPythonSource(fileURLToPath(new URL('..', import.meta.url)))
 const python = process.env.PYTHON ?? 'python3'
 
 function fixture(t, productVersion = '0.5.0') {
@@ -120,4 +121,77 @@ test('an incompatible prepared City is a setup failure without submitted queries
   assert.equal(observations.length, 0)
   assert.match(row.errors.join(' '), /current City/)
   assert(!fs.readFileSync(calls, 'utf8').includes('"command":"stream"'))
+})
+
+
+test('verified City reuse preserves queries and excludes preparation timing; changed inputs fail', async t => {
+  const { context, calls, options } = fixture(t)
+  const previous = path.join(context.cityDirectory, 'previous')
+  const first = { ...context, cityDirectory: path.join(previous, 'fixture') }
+  fs.mkdirSync(first.cityDirectory, { recursive: true })
+  await runEngine(first, 'VIGO', options)
+  const identity = { inputs: { digest: 'a'.repeat(64) } }
+  fs.writeFileSync(path.join(first.cityDirectory, 'recording.json'), JSON.stringify(identity))
+  fs.writeFileSync(path.join(context.cityDirectory, 'recording.json'), JSON.stringify(identity))
+  fs.mkdirSync(path.join(previous, 'provenance'))
+  const runtime = await fingerprint(options.vigoCli)
+  fs.writeFileSync(path.join(previous, 'provenance/manifest.json'), JSON.stringify({ node: process.version, runtimes: { vigoCli: runtime, vigoKernel: runtime, vigoNode: await fingerprint(process.execPath) } }))
+  const reuse = { ...options, vigoKernel: options.vigoCli, reuseVigoBuilds: previous }
+  const { row, observations } = await runEngine(context, 'VIGO', reuse)
+  assert.equal(row.round.complete, true)
+  assert.equal(observations.length, 2)
+  assert.equal(row.executionContract.preparedNetworkReused, true)
+  assert.equal(row.coldPrep.ms, null)
+  assert.equal(row.round.preparationAndQueryMs, null)
+  assert.equal(row.round.amortizedPreparationAndQueryMsPerRequest, null)
+  assert.equal(fs.readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse).filter(x => x.command === 'build').length, 1)
+  const sourceManifest = fs.readFileSync(path.join(first.cityDirectory, 'vigo/network/network.json'), 'utf8')
+  fs.writeFileSync(path.join(context.cityDirectory, 'vigo/network/network.json'), '{}')
+  assert.equal(fs.readFileSync(path.join(first.cityDirectory, 'vigo/network/network.json'), 'utf8'), sourceManifest)
+  fs.writeFileSync(path.join(context.cityDirectory, 'recording.json'), JSON.stringify({ inputs: { digest: 'changed' } }))
+  const mismatch = await runEngine(context, 'VIGO', reuse)
+  assert.equal(mismatch.row.setupErrors, 1)
+  assert.equal(mismatch.row.unsubmittedQueries, 2)
+  assert.equal(mismatch.observations.length, 0)
+  assert.match(mismatch.row.errors.join(' '), /input identity mismatch/)
+  const corrupt = JSON.parse(fs.readFileSync(path.join(previous, 'provenance/manifest.json'), 'utf8'))
+  corrupt.runtimes.vigoKernel.sha256 = 'b'.repeat(64)
+  fs.writeFileSync(path.join(previous, 'provenance/manifest.json'), JSON.stringify(corrupt))
+  const runtimeMismatch = await runEngine(context, 'VIGO', reuse)
+  assert.equal(runtimeMismatch.row.setupErrors, 1)
+  assert.match(runtimeMismatch.row.errors.join(' '), /runtime mismatch/)
+})
+
+
+test('runtime-change reuse is explicit and records both readers without accepting missing provenance', async t => {
+  const { context, options } = fixture(t, '1.0.0-rc.2')
+  const previous = path.join(context.cityDirectory, 'previous')
+  const first = { ...context, cityDirectory: path.join(previous, 'fixture') }
+  fs.mkdirSync(first.cityDirectory, { recursive: true })
+  const built = await runEngine(first, 'VIGO', options)
+  assert.equal(built.row.status, 'ready')
+  const identity = { inputs: { digest: 'a'.repeat(64) } }
+  fs.writeFileSync(path.join(first.cityDirectory, 'recording.json'), JSON.stringify(identity))
+  fs.writeFileSync(path.join(context.cityDirectory, 'recording.json'), JSON.stringify(identity))
+  const reuse = { ...options, vigoKernel: options.vigoCli, reuseVigoBuilds: previous, allowReusedRuntimeChange: true }
+  const absent = await runEngine(context, 'VIGO', reuse)
+  assert.equal(absent.row.setupErrors, 1)
+  assert.equal(absent.observations.length, 0)
+  assert.match(absent.row.errors.join(' '), /missing its provenance/)
+  fs.mkdirSync(path.join(previous, 'provenance'))
+  const runtime = await fingerprint(options.vigoCli)
+  const manifest = { node: process.version, runtimes: { vigoCli: runtime, vigoKernel: { ...runtime, sha256: 'b'.repeat(64) }, vigoNode: await fingerprint(process.execPath) } }
+  fs.writeFileSync(path.join(previous, 'provenance/manifest.json'), JSON.stringify(manifest))
+  const result = await runEngine(context, 'VIGO', reuse)
+  assert.equal(result.row.status, 'ready', result.row.errors.join(' '))
+  assert.equal(result.row.coldPrep.status, 'reused')
+  assert.equal(result.row.requiredInputs.preparationLog, 'reused-preparation.json')
+  const recorded = JSON.parse(fs.readFileSync(path.join(context.cityDirectory, 'vigo/reused-preparation.json')))
+  assert.equal(recorded.readerChanges.vigoKernel.preparedWith.sha256, 'b'.repeat(64))
+  assert.equal(recorded.readerChanges.vigoKernel.queriedWith.sha256, runtime.sha256)
+  delete manifest.runtimes.vigoKernel.sha256
+  fs.writeFileSync(path.join(previous, 'provenance/manifest.json'), JSON.stringify(manifest))
+  const missingHash = await runEngine(context, 'VIGO', reuse)
+  assert.equal(missingHash.row.setupErrors, 1)
+  assert.match(missingHash.row.errors.join(' '), /Missing reused City runtime fingerprint/)
 })

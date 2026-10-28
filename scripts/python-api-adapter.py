@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Benchmark VIGO 0.5's public Python API through complete Result serialization."""
+"""Benchmark VIGO’s public Python API through complete Result serialization."""
 import json
 import os
 from pathlib import Path
@@ -17,7 +17,7 @@ def route_options(request, context):
     if request.get("kind", "route") != "route":
         raise ValueError("The coordinate benchmark requires kind: route")
     if context.get("routingPreference", "fastest") != "fastest":
-        raise ValueError("VIGO 0.5 requires the earliest_arrival objective")
+        raise ValueError("VIGO benchmark requires the earliest_arrival objective")
     controls = context["comparison"]
     preference = request.get("timePreference", "depart_at")
     if preference not in {"depart", "depart_at", "arrive", "arrive_by"}:
@@ -38,20 +38,29 @@ def route_options(request, context):
     return options
 
 
+def resolve_wrapper_source(workspace=None):
+    explicit = os.environ.get("VIGO_BENCH_PYTHON_SOURCE")
+    if explicit and explicit.strip():
+        return Path(explicit).resolve()
+    workspace = workspace or Path(__file__).resolve().parents[2]
+    candidates = [workspace / "vigo" / "python", workspace / "vigo-py"]
+    return next((source for source in candidates if (source / "vigo" / "__init__.py").is_file()), candidates[0])
+
+
 def main():
-    source = Path(os.environ.get("VIGO_BENCH_PYTHON_SOURCE", Path(__file__).resolve().parents[2] / "vigo-py")).resolve()
+    source = resolve_wrapper_source()
     sys.path.insert(0, str(source))
     import vigo
 
-    if not re.fullmatch(r"0\.5\.\d+(?:[-+].*)?", vigo.__version__):
-        raise RuntimeError("This adapter requires VIGO-py 0.5; select the current wrapper source")
+    if not re.fullmatch(r"(?:0\.5\.\d+(?:[-+].*)?|1\.0\.\d+(?:rc\d+)?)", vigo.__version__):
+        raise RuntimeError("This adapter requires VIGO-py 0.5 or 1.0; select the current wrapper source")
     # Pin Node as well as the CLI, so PATH cannot select another engine host.
     command = os.environ.get("VIGO_BENCH_VIGO_COMMAND_JSON")
     runtime = json.loads(command) if command else os.environ["VIGO_BENCH_VIGO_CLI"]
     network = Path(os.environ["VIGO_BENCH_NETWORK_DIR"])
     context = json.loads(Path(os.environ["VIGO_BENCH_CONTEXT"]).read_text())
     if context.get("routingPreference", "fastest") != "fastest":
-        raise ValueError("VIGO 0.5 requires the earliest_arrival objective")
+        raise ValueError("VIGO benchmark requires the earliest_arrival objective")
     if os.environ["VIGO_BENCH_PHASE"] == "prepare":
         with vigo.build(network, gtfs=json.loads(os.environ["VIGO_BENCH_GTFS_PATHS_JSON"]),
                         osm=os.environ["VIGO_BENCH_OSM_PBF"], street_modes="walk", runtime=runtime, timeout=1800) as city:

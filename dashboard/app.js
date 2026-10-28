@@ -26,6 +26,23 @@ const number = formatNumber;
 const integer = (value) => number(value, 0);
 const duration = (value) => finite(value) ? `${number(value)} ms` : 'Not recorded';
 
+export function renderCandidateDiagnostics(row) {
+  const diagnostics = row.diagnostics ?? row.itinerary?.diagnostics ?? row.candidateSelection;
+  if (!Number.isInteger(diagnostics?.nativeCandidateCount)) return '';
+  const rejected = diagnostics.nativeCandidateRejections ?? [];
+  const selected = Number.isInteger(diagnostics.selectedNativeIndex)
+    ? ` Selected native candidate ${diagnostics.selectedNativeIndex + 1}.` : '';
+  const reasons = {
+    walk_faster_than_common_speed: 'Walking time is too short for the requested speed',
+    walk_path_unresolved: 'Walking path could not be resolved',
+    access_walk_budget_exceeded: 'Access walk exceeds the distance limit',
+    egress_walk_budget_exceeded: 'Egress walk exceeds the distance limit',
+    transfer_cap_exceeded: 'Too many transfers', horizon_exceeded: 'Journey exceeds the time limit',
+    transit_required: 'No transit ride', cancelled_transit_leg: 'Cancelled transit leg',
+  };
+  return `<section class="candidate-diagnostics"><h3>Native candidates</h3><p>${integer(diagnostics.policyPassingCandidateCount)} of ${integer(diagnostics.nativeCandidateCount)} passed the routing checks.${html(selected)}</p>${rejected.length ? `<p>Rejected candidate diagnostics are retained below. Their times are not validated journey results.</p><ul>${rejected.map(candidate => `<li>Candidate ${integer(candidate.nativeIndex + 1)}${finite(candidate.durationMinutes) ? ` · ${number(candidate.durationMinutes)} min from requested departure` : ''}: ${html((candidate.policyViolations ?? []).map(reason => reasons[reason] ?? reason).join('; '))}</li>`).join('')}</ul>` : ''}</section>`;
+}
+
 export function minuteClock(value) {
   if (!finite(value)) return '';
   const seconds = Math.round(value * 60), days = Math.floor(seconds / 86400);
@@ -558,7 +575,7 @@ async function showQuery(id, selectedLane = state.lane) {
     renderMapControls();
     const route = row.route ?? row.response?.route ?? {};
     const legs = route.legs ?? route.itinerary?.legs ?? row.itinerary?.legs ?? [];
-    $('query-detail').innerHTML = `<p class="detail-note">${html(lane.engine)} · ${html(outcomeName(row.status))} · ${html(row.odId ?? id)}${row.odType ? ` · ${html(row.odType)}` : ''} · repeat ${integer(row.repeat)}</p><button class="quiet" data-show-map>View on map</button><div class="detail-stats">${Object.entries(metrics).map(([field, metric]) => `<div class="pair-stat"><span>${html(metric.label)}</span><strong>${duration(row[field])}</strong></div>`).join('')}</div>${row.detail ? `<p class="detail-note">${html(typeof row.detail === 'string' ? row.detail : JSON.stringify(row.detail))}</p>` : ''}${renderItineraryLegs(row) ? `<h3>Itinerary</h3>${renderItineraryLegs(row)}` : '<p class="detail-note">The engine response is available below.</p>'}${row.timingLabel ? `<p class="detail-note">${html(row.timingLabel)}</p>` : ''}${finite(row.route?.durationMinutes) ? `<p class="detail-note">Final journey: ${number(row.route.durationMinutes)} min from requested departure, including initial waiting.</p>` : ''}<details class="provenance"><summary>Full response</summary><pre tabindex="0">${html(JSON.stringify(row, null, 2))}</pre></details>`;
+    $('query-detail').innerHTML = `<p class="detail-note">${html(lane.engine)} · ${html(outcomeName(row.status))} · ${html(row.odId ?? id)}${row.odType ? ` · ${html(row.odType)}` : ''} · repeat ${integer(row.repeat)}</p><button class="quiet" data-show-map>View on map</button><div class="detail-stats">${Object.entries(metrics).map(([field, metric]) => `<div class="pair-stat"><span>${html(metric.label)}</span><strong>${duration(row[field])}</strong></div>`).join('')}</div>${row.detail ? `<p class="detail-note">${html(typeof row.detail === 'string' ? row.detail : JSON.stringify(row.detail))}</p>` : ''}${renderItineraryLegs(row) ? `<h3>Itinerary</h3>${renderItineraryLegs(row)}` : '<p class="detail-note">The engine response is available below.</p>'}${row.timingLabel ? `<p class="detail-note">${html(row.timingLabel)}</p>` : ''}${finite(row.route?.durationMinutes) ? `<p class="detail-note">Final journey: ${number(row.route.durationMinutes)} min from requested departure, including initial waiting.</p>` : ''}${renderCandidateDiagnostics(row)}<details class="provenance"><summary>Full response</summary><pre tabindex="0">${html(JSON.stringify(row, null, 2))}</pre></details>`;
   } catch (error) { setText('query-detail', `Could not read this observation. ${error.message}`); }
 }
 

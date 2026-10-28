@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { checkVigoRuntime, readVigoCityManifest, resolveVigoKernel, vigoRouteRequest } from '../scripts/vigo-runtime.mjs'
+import { checkVigoRuntime, readVigoCityManifest, resolveVigoKernel, resolveVigoPythonSource, vigoRouteRequest } from '../scripts/vigo-runtime.mjs'
 import { recordProvenance } from '../scripts/benchmark-recording.mjs'
 import { runNdjsonCommand } from '../scripts/run-benchmark.mjs'
 
@@ -41,8 +41,10 @@ test('runtime gate accepts the current extensible command catalog and rejects an
     const capabilities = { schemaVersion: 'vigo.capabilities.v3', productVersion: '0.5.0', apiVersion: '1.0',
       publicCliCommands: ['build', 'build-scenarios', 'stream', 'route', 'matrix', 'reach'],
       output: { diagnostics: ['none', 'trace'] } }
-    fs.writeFileSync(cli, `console.log(JSON.stringify(${JSON.stringify(capabilities)}))`)
-    assert.equal(checkVigoRuntime(cli).productVersion, '0.5.0')
+    for (const productVersion of ['0.5.0', '1.0.0-rc.2', '1.0.0']) {
+      fs.writeFileSync(cli, `console.log(JSON.stringify(${JSON.stringify({ ...capabilities, productVersion })}))`)
+      assert.equal(checkVigoRuntime(cli).productVersion, productVersion)
+    }
     fs.writeFileSync(cli, `console.log(JSON.stringify(${JSON.stringify({ ...capabilities, productVersion: '0.4.4' })}))`)
     assert.throws(() => checkVigoRuntime(cli), /requires Engine 0.5/)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
@@ -85,4 +87,24 @@ test('provenance identifies the actual native addon and wrapper source, includin
     assert.notEqual(first.vigoPython.sourceSha256, second.vigoPython.sourceSha256)
     assert.equal(first.vigoKernel.sha256, second.vigoKernel.sha256)
   } finally { fs.rmSync(root, { recursive: true, force: true }) }
+})
+
+
+test('source discovery supports integrated and standalone wrappers without overriding explicit paths', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vigo-source-mock-'))
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
+  const bench = path.join(root, 'bench')
+  const standalone = path.join(root, 'vigo-py'), integrated = path.join(root, 'vigo/python')
+  fs.mkdirSync(path.join(standalone, 'vigo'), { recursive: true })
+  fs.writeFileSync(path.join(standalone, 'vigo/__init__.py'), '# fixture')
+  assert.equal(resolveVigoPythonSource(bench, ''), standalone)
+  fs.mkdirSync(path.join(integrated, 'vigo'), { recursive: true })
+  fs.writeFileSync(path.join(integrated, 'vigo/__init__.py'), '# fixture')
+  assert.equal(resolveVigoPythonSource(bench, ''), integrated)
+  assert.equal(resolveVigoPythonSource(bench, standalone), standalone)
+  const cli = path.join(root, 'vigo/public/vigo.mjs')
+  const kernel = path.join(root, 'vigo/crates/vigo-runtime/vigo-routing-kernel.node')
+  fs.mkdirSync(path.dirname(kernel), { recursive: true })
+  fs.writeFileSync(kernel, 'fixture')
+  assert.equal(resolveVigoKernel(cli, ''), kernel)
 })
