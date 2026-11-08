@@ -58,8 +58,11 @@ function fixture(t, productVersion = '0.5.0') {
       }
     } else throw Error('Unexpected command: ' + command);
   `)
+  // The simulated runtime never reads inputs, but VIGO-py rejects missing files before building.
+  const osmPath = path.join(root, 'map.pbf'), gtfsPath = path.join(root, 'feed.zip')
+  for (const file of [osmPath, gtfsPath]) fs.writeFileSync(file, 'fixture')
   const context = { cityDirectory: root,
-    city: { slug: 'fixture', label: 'Fixture', osmPath: '/unused/map.pbf', gtfsPaths: ['/unused/feed.zip'] },
+    city: { slug: 'fixture', label: 'Fixture', osmPath, gtfsPaths: [gtfsPath] },
     contextPath: path.join(root, 'context.json'), routingPreference: 'fastest',
     serviceDate: '2026-10-08', time: '08:00', maxWalkKm: 1.2,
     comparison: { requireTransitRide: true, maxTransfers: 3, horizonMinutes: 240 },
